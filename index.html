@@ -374,29 +374,115 @@
     /* ============================================================
        TELEGRAM BOT — Writing ishini CEO'ga yuborish
        ------------------------------------------------------------
-       O'quvchi mock exam'ni (Writing bilan) topshirganda, Task 1 va
-       Task 2 matnlari shu tashkilotning (CEO) Telegram Chat ID'siga
-       avtomatik, chiroyli formatlangan holda yuboriladi.
-       ESLATMA: bu ilova hozircha backendsiz (localStorage-only), shu
-       sabab bot tokeni shu yerda frontendda saqlanadi. Bu productionda
-       xavfsiz emas (token brauzerda ochiq ko'rinadi) — kelajakda buni
-       backend proxy orqali yuborishga o'tkazish tavsiya etiladi.
+       ESLATMA: Bu funksiya endi ishlatilmaydi. Avval bot tokeni shu
+       yerda, frontend kodida ochiq saqlangan edi — bu xavfsiz emas edi
+       (har kim sahifa manbasidan tokenni ko'rib, botni suiiste'mol
+       qilishi mumkin edi). Xabar yuborish endi backend'da
+       (apps/notifications/telegram.py) — o'quvchi natijani API orqali
+       yuborganda avtomatik ishga tushadi. Token faqat Railway'ning
+       server-side environment variable'ida saqlanadi.
        ============================================================ */
-    const TELEGRAM_BOT_TOKEN = "8958100282:AAEToX6SgL0z11vny_iBJf7AAJTgd5wD_aU"; // @BotFather'dan olingan token
-
     async function sendTelegramMessage(chatId, text) {
-      if (!TELEGRAM_BOT_TOKEN || !chatId || !text) return;
-      try {
-        const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      // No-op: xabar yuborish backend orqali amalga oshiriladi.
+      console.warn("sendTelegramMessage: endi backend orqali yuboriladi, frontend'dan chaqirish shart emas.");
+    }
+
+    /* ============================================================
+       API CLIENT — Django backend (Railway) bilan aloqa
+       ------------------------------------------------------------
+       Barcha backend so'rovlari shu markazlashgan client orqali
+       o'tadi: JWT tokenlarni saqlaydi, har bir so'rovga Authorization
+       header qo'shadi, 401 kelsa avtomatik refresh qiladi.
+       ============================================================ */
+    const API_BASE_URL = "https://ielts-mock-backend-production.up.railway.app";
+
+    const TOKEN_KEYS = { access: "ielts_access_token", refresh: "ielts_refresh_token" };
+
+    const tokenStore = {
+      getAccess: () => localStorage.getItem(TOKEN_KEYS.access),
+      getRefresh: () => localStorage.getItem(TOKEN_KEYS.refresh),
+      set: (access, refresh) => {
+        localStorage.setItem(TOKEN_KEYS.access, access);
+        if (refresh) localStorage.setItem(TOKEN_KEYS.refresh, refresh);
+      },
+      clear: () => {
+        localStorage.removeItem(TOKEN_KEYS.access);
+        localStorage.removeItem(TOKEN_KEYS.refresh);
+      },
+    };
+
+    async function refreshAccessToken() {
+      const refresh = tokenStore.getRefresh();
+      if (!refresh) throw new Error("No refresh token");
+      const res = await fetch(`${API_BASE_URL}/api/auth/refresh/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.success) throw new Error("Refresh failed");
+      tokenStore.set(json.data.access, null);
+      return json.data.access;
+    }
+
+    /**
+     * apiFetch(path, options) — barcha API so'rovlari shu orqali.
+     * path masalan: "/api/auth/profile/" (API_BASE_URL avtomatik qo'shiladi)
+     * 401 kelsa: bir marta refresh urinib ko'radi, muvaffaqiyatli bo'lsa
+     * so'rovni qaytadan yuboradi; bo'lmasa tokenlarni tozalab xato tashlaydi.
+     */
+    async function apiFetch(path, options = {}, _isRetry = false) {
+      const access = tokenStore.getAccess();
+      const headers = { ...(options.headers || {}) };
+      const isFormData = options.body instanceof FormData;
+      if (!isFormData) headers["Content-Type"] = "application/json";
+      if (access) headers["Authorization"] = `Bearer ${access}`;
+
+      const res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+
+      if (res.status === 401 && !_isRetry && tokenStore.getRefresh()) {
+        try {
+          await refreshAccessToken();
+          return apiFetch(path, options, true);
+        } catch (e) {
+          tokenStore.clear();
+          throw new Error("SESSION_EXPIRED");
+        }
+      }
+
+      let json = null;
+      try { json = await res.json(); } catch (e) { /* body bo'sh bo'lishi mumkin */ }
+
+      if (!res.ok) {
+        const msg = (json && (json.message || JSON.stringify(json.errors))) || `Server xatosi (${res.status})`;
+        throw new Error(msg);
+      }
+      return json;
+    }
+
+    const authApi = {
+      login: async (username, password, role) => {
+        const res = await fetch(`${API_BASE_URL}/api/auth/login/`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
+          body: JSON.stringify({ username, password, role }),
         });
-        if (!res.ok) console.error("Telegram sendMessage xato:", await res.text());
-      } catch (err) {
-        console.error("Telegramga yuborishda xatolik:", err);
-      }
-    }
+        const json = await res.json().catch(() => ({}));
+        if (res.ok && json.success) {
+          tokenStore.set(json.data.access, json.data.refresh);
+        }
+        return json;
+      },
+      logout: async () => {
+        const refresh = tokenStore.getRefresh();
+        tokenStore.clear();
+        if (!refresh) return;
+        try {
+          await apiFetch("/api/auth/logout/", { method: "POST", body: JSON.stringify({ refresh }) });
+        } catch (e) { /* logout xatosi kritik emas — tokenlar allaqachon tozalandi */ }
+      },
+      profile: () => apiFetch("/api/auth/profile/"),
+    };
 
     /* Telegramning 4096 belgi chegarasiga mos, uzun matnni bo'laklarga bo'lib beradi. */
     function splitForTelegram(text, limit = 3500) {
@@ -6038,6 +6124,32 @@
       const [ready, setReady] = useState(false);
       const [data, setData] = useState({ groups: [], students: [], exams: [], assignments: [], results: [] });
       const [toasts, setToasts] = useState([]);
+
+      // Sahifa yangilanganda (F5) tizimdan chiqib ketmaslik uchun:
+      // localStorage'da saqlangan access token bo'lsa, backend'dan profilni
+      // so'rab, sessiyani tiklaymiz. Token yaroqsiz/eskirgan bo'lsa, oddiy
+      // login ekraniga qaytariladi.
+      useEffect(() => {
+        const access = tokenStore.getAccess();
+        if (!access) return;
+        (async () => {
+          try {
+            const res = await authApi.profile();
+            if (res.success) {
+              const roleFromData = res.data.role;
+              setSession({
+                role: roleFromData,
+                user: res.data,
+                orgId: roleFromData === "ceo" ? (res.data.organization?.id || null) : (res.data.organization || null),
+              });
+              setView("app");
+            }
+          } catch (e) {
+            tokenStore.clear();
+          }
+        })();
+      }, []);
+
       // CEO/Support profile overrides (name/phone/address/avatar/password) layered
       // on top of the fixed CEO_ACCOUNT / SUPPORT_ACCOUNT constants.
       const [adminProfiles, setAdminProfiles] = useState({ ceo: {}, support: {} });
@@ -6495,43 +6607,22 @@
         setLoginError("");
         if (!username || !password) { setLoginError("Login va parolni kiriting"); return; }
         setLoginLoading(true);
-        await new Promise((r) => setTimeout(r, 450)); // perceived latency for UX state
-
-        if (loginRole === "support") {
-          const acc = getAdminAccount("support");
-          if (acc.disabled) setLoginError("Bu hisob o'chirilgan");
-          else if (username === acc.username && password === acc.password) {
-            setSession({ role: "support", user: acc, orgId: null });
-            setView("app");
-          } else setLoginError("Login yoki parol noto'g'ri");
-        } else if (loginRole === "ceo") {
-          const org = organizations.find((o) => o.username === username && o.password === password);
-          if (org) {
-            if (org.status !== "active") { setLoginError("Bu tashkilot hisobi faol emas"); setLoginLoading(false); return; }
-            setSession({ role: "ceo", user: { id: org.id, name: org.ceoName, username: org.username, phone: org.phone, email: org.email }, orgId: org.id });
+        try {
+          const res = await authApi.login(username, password, loginRole);
+          if (res.success) {
+            setSession({ role: res.data.role, user: res.data.user, orgId: res.data.org_id });
             setView("app");
           } else {
-            const staff = orgStaff.find((s) => s.username === username && s.password === password);
-            const staffOrg = staff ? organizations.find((o) => o.id === staff.orgId) : null;
-            if (staff && staff.status !== "active") {
-              setLoginError("Bu hisob o'chirilgan");
-            } else if (staff && staffOrg && staffOrg.status === "active") {
-              setSession({ role: staff.role, user: staff, orgId: staff.orgId });
-              setView("app");
-            } else setLoginError("Login yoki parol noto'g'ri");
+            setLoginError(res.message || "Login yoki parol noto'g'ri");
           }
-        } else if (loginRole === "student") {
-          const stu = data.students.find((s) => s.username === username && s.password === password);
-          const stuOrg = stu ? organizations.find((o) => o.id === stu.orgId) : null;
-          if (stu && (!stuOrg || stuOrg.status === "active")) {
-            setSession({ role: "student", user: stu, orgId: stu.orgId });
-            setView("app");
-          } else setLoginError("Username yoki parol noto'g'ri");
+        } catch (err) {
+          setLoginError("Server bilan bog'lanib bo'lmadi. Internetni tekshiring.");
         }
         setLoginLoading(false);
       };
 
       const handleLogout = () => {
+        authApi.logout(); // fire-and-forget: tokenlarni tozalaydi, backend'ga refresh'ni bekor qilishni so'raydi
         setSession(null);
         setLoginError("");
         if (FIXED_ROLE) {
