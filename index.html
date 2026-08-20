@@ -484,6 +484,62 @@
       profile: () => apiFetch("/api/auth/profile/"),
     };
 
+    /* ============================================================
+       ORG API — Tashkilotlar (CEO'lar) endi to'g'ridan-to'g'ri backend
+       (Postgres) orqali boshqariladi, localStorage orqali emas. Backend
+       snake_case (org_name, ceo_name, telegram_chat_id) ishlatadi,
+       frontend esa camelCase (orgName, ceoName, telegramChatId) —
+       shu ikkovi orasida shu yerda moslashtiramiz.
+       ============================================================ */
+    function orgFromApi(o) {
+      return {
+        id: o.id,
+        orgName: o.org_name,
+        ceoName: o.ceo_name,
+        phone: o.phone || "",
+        email: o.email || "",
+        username: o.username,
+        password: o.password || "",
+        telegramChatId: o.telegram_chat_id || "",
+        status: o.status,
+        createdAt: o.created_at,
+      };
+    }
+    function orgToApi(o) {
+      const body = {
+        org_name: o.orgName,
+        ceo_name: o.ceoName,
+        phone: o.phone || "",
+        email: o.email || "",
+        username: o.username,
+        telegram_chat_id: o.telegramChatId || "",
+        status: o.status || "active",
+      };
+      if (o.password) body.password = o.password;
+      return body;
+    }
+    const orgApi = {
+      list: async () => {
+        const json = await apiFetch("/api/organizations/");
+        const results = Array.isArray(json) ? json : (json.results || []);
+        return results.map(orgFromApi);
+      },
+      create: async (org) => {
+        const json = await apiFetch("/api/organizations/", { method: "POST", body: JSON.stringify(orgToApi(org)) });
+        return orgFromApi(json);
+      },
+      update: async (id, patch) => {
+        const json = await apiFetch(`/api/organizations/${id}/`, { method: "PATCH", body: JSON.stringify(orgToApi(patch)) });
+        return orgFromApi(json);
+      },
+      setStatus: async (id, status) => {
+        await apiFetch(`/api/organizations/${id}/status/`, { method: "PATCH", body: JSON.stringify({ status }) });
+      },
+      remove: async (id) => {
+        await apiFetch(`/api/organizations/${id}/`, { method: "DELETE" });
+      },
+    };
+
     /* Telegramning 4096 belgi chegarasiga mos, uzun matnni bo'laklarga bo'lib beradi. */
     function splitForTelegram(text, limit = 3500) {
       const parts = [];
@@ -5633,6 +5689,8 @@
       const [search, setSearch] = useState("");
       const [viewPwFor, setViewPwFor] = useState(null);
       const [staffOrg, setStaffOrg] = useState(null); // org whose staff modal is open
+      const [confirmDelete, setConfirmDelete] = useState(null); // org pending delete confirmation
+      const [deleting, setDeleting] = useState(false);
 
       const existingUsernames = organizations.map((o) => ({ value: o.username, id: o.id }));
       const filtered = organizations.filter((o) => o.orgName.toLowerCase().includes(search.toLowerCase()) || o.ceoName.toLowerCase().includes(search.toLowerCase()));
@@ -5694,6 +5752,7 @@
                   ) : (
                     <Button size="sm" variant="teal" icon="circle-check" onClick={async () => { await actions.setOrganizationStatus(o.id, "active"); toast("success", "Tashkilot faollashtirildi"); }}>Faollashtirish</Button>
                   )}
+                  <Button size="sm" variant="danger" icon="trash" onClick={() => setConfirmDelete(o)}>O'chirish</Button>
                 </div>
               </Card>
             ))}
@@ -5715,7 +5774,13 @@
               <div className="space-y-4">
                 <div className="rounded-xl p-4 space-y-2.5" style={{ backgroundColor: C.paperDim }}>
                   <CopyField label="Username" value={viewPwFor.username} />
-                  <CopyField label="Parol" value={viewPwFor.password} />
+                  {viewPwFor.password ? (
+                    <CopyField label="Parol" value={viewPwFor.password} />
+                  ) : (
+                    <div className="text-[12.5px]" style={{ color: C.mutedSoft }}>
+                      Parol xavfsizlik uchun bazada shifrlangan holda saqlanadi va qayta ko'rsatib bo'lmaydi. Yangi parol belgilash uchun "Tahrirlash"ni bosing.
+                    </div>
+                  )}
                 </div>
                 <div className="flex justify-end"><Button onClick={() => setViewPwFor(null)} icon="check">Yopish</Button></div>
               </div>
@@ -5730,6 +5795,31 @@
               toast={toast}
               onClose={() => setStaffOrg(null)}
             />
+          )}
+
+          {confirmDelete && (
+            <Modal title="Tashkilotni o'chirish" onClose={() => !deleting && setConfirmDelete(null)} width="440px">
+              <div className="space-y-4">
+                <div className="text-[13.5px]" style={{ color: C.muted }}>
+                  <strong style={{ color: C.ink }}>{confirmDelete.orgName}</strong> tashkilotini butunlay o'chirmoqchimisiz? Bu amalni ortga qaytarib bo'lmaydi — CEO shu login bilan endi kira olmaydi.
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button variant="ghost" onClick={() => setConfirmDelete(null)} disabled={deleting}>Bekor qilish</Button>
+                  <Button
+                    variant="danger"
+                    icon="trash"
+                    onClick={async () => {
+                      setDeleting(true);
+                      const ok = await actions.deleteOrganization(confirmDelete.id);
+                      setDeleting(false);
+                      if (ok) { toast("success", "Tashkilot o'chirildi"); setConfirmDelete(null); }
+                    }}
+                  >
+                    {deleting ? "O'chirilmoqda..." : "Ha, o'chirish"}
+                  </Button>
+                </div>
+              </div>
+            </Modal>
           )}
         </div>
       );
@@ -6165,6 +6255,21 @@
          hisoblari (CEO shu ro'yxatda emas — u "organizations"ning o'zida).
          ============================================================ */
       const [organizations, setOrganizations] = useState([]);
+      // Tashkilotlar (Organizations) endi localStorage'da emas, real backend'da
+      // (Postgres) saqlanadi. Support tizimga kirganda (yoki sahifa F5 bilan
+      // yangilanganda profil orqali sessiya tiklanganda) ro'yxatni backend'dan
+      // yuklaymiz.
+      useEffect(() => {
+        if (session?.role !== "support") return;
+        (async () => {
+          try {
+            const list = await orgApi.list();
+            setOrganizations(list);
+          } catch (e) {
+            toast("error", e.message || "Tashkilotlar ro'yxati yuklanmadi");
+          }
+        })();
+      }, [session?.role]);
       const [orgStaff, setOrgStaff] = useState([]);
       /* "Texnik xizmat" — barcha rollardan (support'dan tashqari) yuborilgan
          murojaatlar (tickets). Support CRM panelida bildirishnoma sifatida
@@ -6477,9 +6582,15 @@
         addOrganization: async (org) => {
           if (session?.role !== "support") return deny("tashkilot");
           if (usernameTaken(org.username)) { toast("error", "Bu username allaqachon band (boshqa CEO/xodim tomonidan)"); return false; }
-          const next = [...organizations, org];
-          setOrganizations(next);
-          return persistOrWarn(K.organizations, next, "Tashkilot");
+          try {
+            const created = await orgApi.create(org);
+            const withPw = { ...created, password: org.password }; // faqat shu sessiyada ko'rsatish uchun
+            setOrganizations([...organizations, withPw]);
+            return withPw;
+          } catch (e) {
+            toast("error", e.message || "Tashkilot yaratilmadi");
+            return false;
+          }
         },
         updateOrganization: async (id, patch) => {
           // CEO/Admin o'z tashkilotining ba'zi maydonlarini (nom/telefon/telegram
@@ -6487,15 +6598,36 @@
           const allowed = session?.role === "support" || ((session?.role === "ceo" || session?.role === "admin") && sessionOrgId === id);
           if (!allowed) return deny("tashkilot");
           if (patch.username && usernameTaken(patch.username, id)) { toast("error", "Bu username allaqachon band"); return false; }
-          const next = organizations.map((o) => (o.id === id ? { ...o, ...patch } : o));
-          setOrganizations(next);
-          return persistOrWarn(K.organizations, next, "Tashkilot");
+          try {
+            const updated = await orgApi.update(id, patch);
+            const withPw = patch.password ? { ...updated, password: patch.password } : updated;
+            setOrganizations(organizations.map((o) => (o.id === id ? { ...o, ...withPw } : o)));
+            return withPw;
+          } catch (e) {
+            toast("error", e.message || "Tashkilot yangilanmadi");
+            return false;
+          }
         },
         setOrganizationStatus: async (id, status) => {
           if (session?.role !== "support") return deny("tashkilot");
-          const next = organizations.map((o) => (o.id === id ? { ...o, status } : o));
-          setOrganizations(next);
-          return persistOrWarn(K.organizations, next, "Tashkilot holati");
+          try {
+            await orgApi.setStatus(id, status);
+            setOrganizations(organizations.map((o) => (o.id === id ? { ...o, status } : o)));
+          } catch (e) {
+            toast("error", e.message || "Tashkilot holati o'zgarmadi");
+            return false;
+          }
+        },
+        deleteOrganization: async (id) => {
+          if (session?.role !== "support") return deny("tashkilot");
+          try {
+            await orgApi.remove(id);
+            setOrganizations(organizations.filter((o) => o.id !== id));
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Tashkilot o'chirilmadi (avval uning xodimlari/guruhlarini tekshiring)");
+            return false;
+          }
         },
 
         /* ---- ORG STAFF (Admin/Manager/Teacher) — CEO va Admin (o'z tashkilotiga),
