@@ -6219,6 +6219,16 @@
       // localStorage'da saqlangan access token bo'lsa, backend'dan profilni
       // so'rab, sessiyani tiklaymiz. Token yaroqsiz/eskirgan bo'lsa, oddiy
       // login ekraniga qaytariladi.
+      //
+      // MUHIM: token qaysi rol bilan olingan bo'lsa, faqat SHU rolga mos
+      // sahifada (masalan ?role=support) tiklanadi. Aks holda, support
+      // sifatida login qilgan odam ?role=ceo yoki oddiy "/" havolasini
+      // ochganda ham avtomatik support sifatida kirib qolar edi.
+      function roleMatchesFixed(roleFromData, fixedRole) {
+        if (fixedRole === "ceo") return ["ceo", "admin", "manager", "teacher"].includes(roleFromData);
+        if (fixedRole === "support") return roleFromData === "support";
+        return roleFromData === "student";
+      }
       useEffect(() => {
         const access = tokenStore.getAccess();
         if (!access) return;
@@ -6227,6 +6237,12 @@
             const res = await authApi.profile();
             if (res.success) {
               const roleFromData = res.data.role;
+              if (!roleMatchesFixed(roleFromData, FIXED_ROLE)) {
+                // Boshqa rol uchun saqlangan token — bu sahifada ishlatilmaydi,
+                // shu rolning o'z login ekrani ko'rsatiladi.
+                setView(FIXED_ROLE ? "login" : "landing");
+                return;
+              }
               setSession({
                 role: roleFromData,
                 user: res.data,
