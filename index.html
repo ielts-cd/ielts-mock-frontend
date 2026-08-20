@@ -6256,32 +6256,8 @@
           let orgs = (await storeGet(K.organizations)) || [];
           let staff = (await storeGet(K.orgStaff)) || [];
           if (!orgs.length) {
-            const legacyCeo = { ...CEO_ACCOUNT, ...(savedAdminProfiles.ceo || {}) };
-            const defaultOrg = {
-              id: "org_default",
-              orgName: "Default o'quv markazi",
-              ceoName: legacyCeo.name || CEO_ACCOUNT.name,
-              phone: legacyCeo.phone || "",
-              email: legacyCeo.email || "",
-              username: legacyCeo.username || CEO_ACCOUNT.username,
-              password: legacyCeo.password || CEO_ACCOUNT.password,
-              telegramChatId: legacyCeo.telegramChatId || "",
-              status: legacyCeo.disabled ? "inactive" : "active",
-              createdAt: Date.now(),
-            };
-            orgs = [defaultOrg];
-            await storeSet(K.organizations, orgs);
-
-            const tag = (arr) => arr.map((x) => (x.orgId ? x : { ...x, orgId: defaultOrg.id }));
-            groups = tag(groups); students = tag(students); exams = tag(exams);
-            assignments = tag(assignments); results = tag(results);
-            await Promise.all([
-              storeSet(K.groups, groups),
-              storeSet(K.students, students),
-              storeSet(K.exams, exams),
-              storeSet(K.assignments, assignments),
-              storeSet(K.results, results),
-            ]);
+            // Demo/legacy "Default o'quv markazi" avtomatik yaratilmaydi.
+            // Tashkilotlar endi faqat Support paneli orqali ongli ravishda yaratiladi.
           } else {
             // Orgs allaqachon mavjud — baribir har ehtimolga qarshi orgId'siz
             // qolib ketgan yozuvlarni birinchi tashkilotga biriktiramiz (masalan
