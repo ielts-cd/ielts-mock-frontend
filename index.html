@@ -1578,8 +1578,8 @@
       const [showPw, setShowPw] = useState(false);
 
       const meta = {
-        ceo: { title: "O'quv markazi paneli", desc: "CEO, Admin, Manager va Teacher shu yerdan kiradi", icon: "shield-halved", hint: "Demo (CEO): ceo / Ceo@2026" },
-        support: { title: "Support panel", desc: "Operatsion boshqaruv", icon: "users", hint: "Demo: support / Support@2026" },
+        ceo: { title: "O'quv markazi paneli", desc: "CEO, Admin, Manager va Teacher shu yerdan kiradi", icon: "shield-halved", hint: "" },
+        support: { title: "Support panel", desc: "Operatsion boshqaruv", icon: "users", hint: "" },
         student: { title: "Xush kelibsiz", desc: "Mock exam va vazifalaringizga kirish uchun tizimga kiring", icon: "graduation-cap", hint: "Login ma'lumotlarini admin sizga bergan" },
       }[role];
 
@@ -1697,7 +1697,7 @@
                 </button>
               </form>
 
-              <div className="text-[11.5px] mt-4 text-center f-mono" style={{ color: C.mutedSoft }}>{meta.hint}</div>
+              {meta.hint && <div className="text-[11.5px] mt-4 text-center f-mono" style={{ color: C.mutedSoft }}>{meta.hint}</div>}
             </div>
 
 
