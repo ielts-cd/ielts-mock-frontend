@@ -539,6 +539,66 @@
         await apiFetch(`/api/organizations/${id}/`, { method: "DELETE" });
       },
     };
+        /* ============================================================
+       GROUPS API — guruhlar endi backendga (Postgres) saqlanadi.
+       ============================================================ */
+    function groupFromApi(g) {
+      return { id: g.id, name: g.name, level: g.level, createdAt: g.created_at, orgId: g.organization };
+    }
+    const groupApi = {
+      list: async () => {
+        const json = await apiFetch("/api/groups/");
+        const results = Array.isArray(json) ? json : (json.results || []);
+        return results.map(groupFromApi);
+      },
+      create: async (g) => {
+        const json = await apiFetch("/api/groups/", { method: "POST", body: JSON.stringify({ id: g.id, name: g.name, level: g.level }) });
+        return groupFromApi(json);
+      },
+      update: async (id, patch) => {
+        const body = {};
+        if (patch.name !== undefined) body.name = patch.name;
+        if (patch.level !== undefined) body.level = patch.level;
+        const json = await apiFetch(`/api/groups/${id}/`, { method: "PATCH", body: JSON.stringify(body) });
+        return groupFromApi(json);
+      },
+      remove: async (id) => {
+        await apiFetch(`/api/groups/${id}/`, { method: "DELETE" });
+      },
+    };
+        /* ============================================================
+       SUPPORT TICKETS API — "Texnik xizmat" murojaatlari endi
+       to'g'ridan-to'g'ri backendga (Postgres) saqlanadi, localStorage
+       orqali emas — shu bilan Support qaysi brauzer/qurilmadan kirsa
+       ham barcha murojaatlarni ko'radi.
+       ============================================================ */
+    function ticketFromApi(t) {
+      return {
+        id: t.id,
+        message: t.message,
+        userId: t.user,
+        userName: t.user_name,
+        userRole: t.user_role,
+        orgId: t.organization,
+        orgName: t.org_name,
+        createdAt: t.created_at,
+        seen: t.seen,
+      };
+    }
+    const ticketApi = {
+      list: async () => {
+        const json = await apiFetch("/api/support-tickets/");
+        const results = Array.isArray(json) ? json : (json.results || []);
+        return results.map(ticketFromApi);
+      },
+      create: async (message) => {
+        const json = await apiFetch("/api/support-tickets/", { method: "POST", body: JSON.stringify({ message }) });
+        return ticketFromApi(json);
+      },
+      markSeen: async (id) => {
+        return apiFetch(`/api/support-tickets/${id}/mark_seen/`, { method: "PUT" });
+      },
+    };
 
     /* Telegramning 4096 belgi chegarasiga mos, uzun matnni bo'laklarga bo'lib beradi. */
     function splitForTelegram(text, limit = 3500) {
@@ -6393,8 +6453,12 @@
           setOrganizations(orgs);
           setOrgStaff(staff);
           setAdminProfiles(savedAdminProfiles);
-          const savedTickets = (await storeGet(K.supportTickets)) || [];
-          setSupportTickets(savedTickets);
+          try {
+            const savedTickets = await ticketApi.list();
+            setSupportTickets(savedTickets);
+          } catch (e) {
+            console.error("Texnik xizmat murojaatlari yuklanmadi:", e);
+          }
           setReady(true);
         })();
       }, []);
@@ -6440,25 +6504,40 @@
 
       /* ---- data actions (optimistic + persisted) ---- */
       const actions = {
-        addGroup: async (g) => {
+                addGroup: async (g) => {
           if (!sessionOrgId) return deny("guruh");
-          const next = [...data.groups, { ...g, orgId: sessionOrgId }];
-          setData((d) => ({ ...d, groups: next }));
-          return persistOrWarn(K.groups, next, "Guruh");
+          try {
+            const created = await groupApi.create(g);
+            setData((d) => ({ ...d, groups: [...d.groups, created] }));
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Guruh saqlanmadi");
+            return false;
+          }
         },
         updateGroup: async (id, patch) => {
           const existing = data.groups.find((g) => g.id === id);
           if (!ownsRecord(existing)) return deny("guruh");
-          const next = data.groups.map((g) => (g.id === id ? { ...g, ...patch, orgId: g.orgId } : g));
-          setData((d) => ({ ...d, groups: next }));
-          return persistOrWarn(K.groups, next, "Guruh");
+          try {
+            const updated = await groupApi.update(id, patch);
+            setData((d) => ({ ...d, groups: d.groups.map((g) => (g.id === id ? updated : g)) }));
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Guruh yangilanmadi");
+            return false;
+          }
         },
         deleteGroup: async (id) => {
           const existing = data.groups.find((g) => g.id === id);
           if (!ownsRecord(existing)) return deny("guruh");
-          const next = data.groups.filter((g) => g.id !== id);
-          setData((d) => ({ ...d, groups: next }));
-          return persistOrWarn(K.groups, next, "Guruh o'chirish");
+          try {
+            await groupApi.remove(id);
+            setData((d) => ({ ...d, groups: d.groups.filter((g) => g.id !== id) }));
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Guruh o'chirilmadi");
+            return false;
+          }
         },
         addStudent: async (s) => {
           if (!sessionOrgId) return deny("o'quvchi");
@@ -6680,44 +6759,47 @@
            muammo yuboradi. Xabar: (1) localStorage'da saqlanadi va Support CRM
            panelida ko'rinadi, (2) Support profilida kiritilgan Telegram Chat
            ID'ga bot orqali yuboriladi (agar kiritilgan bo'lsa). */
-        submitSupportTicket: async (message) => {
-          if (!session || session.role === "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return false; }
-          const text = (message || "").trim();
-          if (!text) { toast("error", "Muammo tavsifini kiriting"); return false; }
-          const org = organizations.find((o) => o.id === session.orgId);
-          const ticket = {
-            id: uid("ticket"),
-            message: text,
-            userId: session.user?.id || null,
-            userName: session.user?.name || session.user?.username || "Foydalanuvchi",
-            userRole: session.role,
-            orgId: session.orgId || null,
-            orgName: org?.orgName || null,
-            createdAt: Date.now(),
-            seen: false,
-          };
-          const next = [ticket, ...supportTickets];
-          setSupportTickets(next);
-          const ok = await persistOrWarn(K.supportTickets, next, "Murojaat");
-          // Telegramga yuborish — Support hali Chat ID kiritmagan bo'lsa jim o'tkaziladi
-          // (localStorage'dagi eng so'nggi qiymat: adminProfiles state closure orqali).
-          const supportChatId = (adminProfiles.support || {}).telegramChatId;
-          if (supportChatId) sendSupportTicketToTelegram(supportChatId, ticket);
-          return ok;
-        },
-        markSupportTicketSeen: async (id) => {
-          if (session?.role !== "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return; }
-          const next = supportTickets.map((t) => (t.id === id ? { ...t, seen: true } : t));
-          setSupportTickets(next);
-          await storeSet(K.supportTickets, next);
-        },
-        markAllSupportTicketsSeen: async () => {
-          if (session?.role !== "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return; }
-          const next = supportTickets.map((t) => ({ ...t, seen: true }));
-          setSupportTickets(next);
-          await storeSet(K.supportTickets, next);
-        },
-      };
+          submitSupportTicket: async (message) => {
+            if (!session || session.role === "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return false; }
+            const text = (message || "").trim();
+            if (!text) { toast("error", "Muammo tavsifini kiriting"); return false; }
+            try {
+              const ticket = await ticketApi.create(text);
+              setSupportTickets((prev) => [ticket, ...prev]);
+              const supportChatId = (adminProfiles.support || {}).telegramChatId;
+              if (supportChatId) sendSupportTicketToTelegram(supportChatId, ticket);
+              return true;
+            } catch (e) {
+              toast("error", e.message || "Murojaat yuborilmadi");
+              return false;
+            }
+          },
+          markSupportTicketSeen: async (id) => {
+            if (session?.role !== "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return; }
+            try {
+              await ticketApi.markSeen(id);
+              setSupportTickets((prev) => prev.map((t) => (t.id === id ? { ...t, seen: true } : t)));
+            } catch (e) {
+              toast("error", e.message || "Belgilanmadi");
+            }
+          },
+          markAllSupportTicketsSeen: async () => {
+            if (session?.role !== "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return; }
+            const unseen = supportTickets.filter((t) => !t.seen);
+            try {
+              await Promise.all(unseen.map((t) => ticketApi.markSeen(t.id)));
+              setSupportTickets((prev) => prev.map((t) => ({ ...t, seen: true })));
+            } catch (e) {
+              toast("error", e.message || "Belgilanmadi");
+            }
+          },
+          markAllSupportTicketsSeen: async () => {
+            if (session?.role !== "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return; }
+            const next = supportTickets.map((t) => ({ ...t, seen: true }));
+            setSupportTickets(next);
+            await storeSet(K.supportTickets, next);
+          },
+        };
 
       /* ---- auth ----
          MULTI-TENANT LOGIN: "ceo" havolasi endi CEO + Admin + Manager + Teacher
