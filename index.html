@@ -6,16 +6,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>IELTS Compass — Mock Exam Platform</title>
 
-  <!-- Theme flash oldini olish: saqlangan mavzuni sahifa chizilishidan oldin qo'llash -->
-  <script>
-    (function () {
-      try {
-        var raw = localStorage.getItem("ielts_theme_v1");
-        var t = raw ? JSON.parse(raw) : null;
-        if (t === "dark") document.documentElement.setAttribute("data-theme", "dark");
-      } catch (e) { }
-    })();
-  </script>
+  <!-- Mavzu (theme) endi foydalanuvchi hisobiga bog'liq holda backend'da
+       saqlanadi (localStorage emas) — shuning uchun sahifa birinchi
+       chizilganda har doim "light" bilan boshlanadi, so'ng profil
+       backend'dan yuklangach kerak bo'lsa "dark"ga almashtiriladi. -->
 
   <!-- Tailwind (CDN, JIT — utility classes compiled in-browser) -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -176,7 +170,8 @@
     /* ============================================================
        THEME CONTEXT — light / dark toggle
        ============================================================ */
-    const THEME_KEY = "ielts_theme_v1";
+    /* Theme endi localStorage'da emas, backend'dagi foydalanuvchi profilida
+       ("theme" maydoni) saqlanadi — pastga qarang: preferencesApi. */
     const ThemeContext = React.createContext({ theme: "light", toggleTheme: () => { } });
 
     function ThemeToggle({ size = "md", floating = false }) {
@@ -211,61 +206,6 @@
           style={{ fontSize: size, lineHeight: 1, width: size, textAlign: "center", color: color || style.color, ...style }}
         />
       );
-    }
-
-    /* ============================================================
-       STORAGE HELPERS
-       ============================================================ */
-    const K = {
-      groups: "ielts_groups",
-      students: "ielts_students",
-      exams: "ielts_exams",
-      assignments: "ielts_assignments",
-      results: "ielts_results",
-      seeded: "ielts_seeded_v1",
-      adminProfiles: "ielts_admin_profiles",
-      /* MULTI-TENANT: har bir o'quv markazi (CEO) — "organizations" — va shu markaz
-         ichidagi xodimlar (Admin/Manager/Teacher) — "orgStaff". Har bir yozuvda
-         tegishli bo'lgan barcha entity (groups/students/exams/assignments/results)
-         "orgId" maydoniga ega bo'ladi — shu orqali ma'lumotlar CEO bo'yicha
-         izolyatsiya qilinadi (pastga qarang: MULTI-TENANT ISOLATION). */
-      organizations: "ielts_organizations_v1",
-      orgStaff: "ielts_org_staff_v1",
-      /* Tugallanmagan (davom etayotgan) mock exam holati — javoblar, bo'lim
-         navigatsiyasi va HAR BIR bo'limning tugash vaqti (absolute timestamp)
-         shu yerda saqlanadi. Shu tufayli sahifa qayta yuklansa (refresh),
-         tab yopilib qaytadan ochilsa yoki tab almashtirilsa ham: (1) javoblar
-         yo'qolmaydi, (2) taymer noldan qayta boshlanmaydi — voqealar orasidagi
-         haqiqiy vaqtga (Date.now()) asoslanadi. */
-      examProgress: "ielts_exam_progress_v1",
-      /* "Texnik xizmat" (support) bo'limi — barcha rollardan (support'dan tashqari)
-         yuborilgan murojaatlar (tickets) shu yerda saqlanadi va Support CRM
-         panelida bildirishnoma sifatida ko'rinadi. */
-      supportTickets: "ielts_support_tickets_v1",
-    };
-
-    /* Persistence: browser localStorage (per-device). Swap these two
-       functions for real API calls once a backend/database is added —
-       no other code in this file needs to change. */
-    async function storeGet(key) {
-      try {
-        const raw = localStorage.getItem(key);
-        return raw != null ? JSON.parse(raw) : null;
-      } catch (e) {
-        return null;
-      }
-    }
-    async function storeSet(key, value) {
-      try {
-        localStorage.setItem(key, JSON.stringify(value));
-        return true;
-      } catch (e) {
-        /* Eng ko'p uchraydigan sabab: localStorage hajmi to'lib qolgan (masalan, katta
-           audio/rasm fayllari base64 shaklida saqlanadi va ~5-10MB limitga tez yetadi).
-           Xatoni konsolga chiqaramiz — chaqiruvchi (actions) buni foydalanuvchiga ko'rsatadi. */
-        console.error(`storeSet("${key}") xato:`, e);
-        return false;
-      }
     }
 
     function uid(prefix = "id") {
@@ -482,6 +422,20 @@
         } catch (e) { /* logout xatosi kritik emas — tokenlar allaqachon tozalandi */ }
       },
       profile: () => apiFetch("/api/auth/profile/"),
+      updateProfile: (patch) => apiFetch("/api/auth/profile/", { method: "PUT", body: JSON.stringify(patch) }),
+      changePassword: (currentPassword, newPassword) => apiFetch("/api/auth/change-password/", {
+        method: "POST",
+        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+      }),
+    };
+
+    /* ============================================================
+       PREFERENCES API — theme va sidebar holati (avval localStorage'da
+       edi) endi shu orqali to'g'ridan-to'g'ri foydalanuvchi profiliga
+       (backend/Postgres) saqlanadi.
+       ============================================================ */
+    const preferencesApi = {
+      update: (patch) => authApi.updateProfile(patch),
     };
 
     /* ============================================================
@@ -518,6 +472,22 @@
       if (o.password) body.password = o.password;
       return body;
     }
+    /* Qisman (partial) PATCH uchun — faqat "patch" obyektida haqiqatan ham
+       berilgan maydonlar yuboriladi, aks holda (masalan CEO faqat ism/telefon
+       o'zgartirganda) email/telegram/status kabi boshqa maydonlar bo'sh
+       qiymat bilan tasodifan ustidan yozilib qolar edi. */
+    function orgPatchToApi(patch) {
+      const body = {};
+      if (patch.orgName !== undefined) body.org_name = patch.orgName;
+      if (patch.ceoName !== undefined) body.ceo_name = patch.ceoName;
+      if (patch.phone !== undefined) body.phone = patch.phone;
+      if (patch.email !== undefined) body.email = patch.email;
+      if (patch.username !== undefined) body.username = patch.username;
+      if (patch.telegramChatId !== undefined) body.telegram_chat_id = patch.telegramChatId;
+      if (patch.status !== undefined) body.status = patch.status;
+      if (patch.password) body.password = patch.password;
+      return body;
+    }
     const orgApi = {
       list: async () => {
         const json = await apiFetch("/api/organizations/");
@@ -529,7 +499,7 @@
         return orgFromApi(json);
       },
       update: async (id, patch) => {
-        const json = await apiFetch(`/api/organizations/${id}/`, { method: "PATCH", body: JSON.stringify(orgToApi(patch)) });
+        const json = await apiFetch(`/api/organizations/${id}/`, { method: "PATCH", body: JSON.stringify(orgPatchToApi(patch)) });
         return orgFromApi(json);
       },
       setStatus: async (id, status) => {
@@ -597,6 +567,305 @@
       },
       markSeen: async (id) => {
         return apiFetch(`/api/support-tickets/${id}/mark_seen/`, { method: "PUT" });
+      },
+    };
+
+    /* ============================================================
+       STUDENTS API — o'quvchilar endi backendga (Postgres) saqlanadi.
+       ESLATMA: backend parolni har doim hash'lab saqlaydi (write-only) —
+       shuning uchun ro'yxatdan qaytgan yozuvda "password" maydoni
+       bo'lmaydi. Yaratilgandan keyingi ekranda parol faqat o'sha
+       so'rovda o'zimiz yuborgan qiymatdan ko'rsatiladi; keyinroq "parolni
+       ko'rish" uchun esa yangi parol generatsiya qilish kerak bo'ladi
+       (pastga q.: updateStudent({ password })).
+       ============================================================ */
+    function studentFromApi(s) {
+      return {
+        id: s.id,
+        name: s.name,
+        username: s.username,
+        groupId: s.group_id != null ? s.group_id : (s.group || null),
+        orgId: s.organization,
+        avatar: s.avatar || "",
+        status: s.status || "active",
+        createdAt: s.created_at,
+      };
+    }
+    const studentApi = {
+      list: async () => {
+        const json = await apiFetch("/api/students/");
+        const results = Array.isArray(json) ? json : (json.results || []);
+        return results.map(studentFromApi);
+      },
+      create: async (s) => {
+        const body = { id: s.id, name: s.name, username: s.username, password: s.password, group: s.groupId || null };
+        const json = await apiFetch("/api/students/", { method: "POST", body: JSON.stringify(body) });
+        return studentFromApi(json);
+      },
+      update: async (id, patch) => {
+        const body = {};
+        if (patch.name !== undefined) body.name = patch.name;
+        if (patch.username !== undefined) body.username = patch.username;
+        if (patch.password !== undefined) body.password = patch.password;
+        if (patch.groupId !== undefined) body.group = patch.groupId || null;
+        if (patch.avatar !== undefined) body.avatar = patch.avatar;
+        if (patch.status !== undefined) body.status = patch.status;
+        const json = await apiFetch(`/api/students/${id}/`, { method: "PATCH", body: JSON.stringify(body) });
+        return studentFromApi(json);
+      },
+      remove: async (id) => {
+        await apiFetch(`/api/students/${id}/`, { method: "DELETE" });
+      },
+    };
+
+    /* ============================================================
+       STAFF API — Admin/Manager/Teacher hisoblari endi backendga
+       (Postgres) saqlanadi.
+       ============================================================ */
+    function staffFromApi(s) {
+      return {
+        id: s.id,
+        name: s.name,
+        role: s.role,
+        username: s.username,
+        phone: s.phone || "",
+        avatar: s.avatar || "",
+        status: s.status || "active",
+        orgId: s.organization,
+        createdAt: s.created_at,
+      };
+    }
+    const staffApi = {
+      list: async () => {
+        const json = await apiFetch("/api/staff/");
+        const results = Array.isArray(json) ? json : (json.results || []);
+        return results.map(staffFromApi);
+      },
+      create: async (s) => {
+        const body = { id: s.id, name: s.name, role: s.role, phone: s.phone || "", username: s.username, password: s.password };
+        // Support istalgan tashkilotga xodim qo'shganda, qaysi tashkilotga
+        // tegishli ekanini aniq ko'rsatish kerak (aks holda backend uni
+        // rad etadi) — CEO/Admin uchun bu maydon e'tiborga olinmaydi
+        // (backend har doim ularning O'Z tashkilotini ishlatadi).
+        if (s.orgId) body.organization = s.orgId;
+        const json = await apiFetch("/api/staff/", { method: "POST", body: JSON.stringify(body) });
+        return staffFromApi(json);
+      },
+      update: async (id, patch) => {
+        const body = {};
+        if (patch.name !== undefined) body.name = patch.name;
+        if (patch.role !== undefined) body.role = patch.role;
+        if (patch.phone !== undefined) body.phone = patch.phone;
+        if (patch.username !== undefined) body.username = patch.username;
+        if (patch.password !== undefined) body.password = patch.password;
+        if (patch.avatar !== undefined) body.avatar = patch.avatar;
+        if (patch.status !== undefined) body.status = patch.status;
+        const json = await apiFetch(`/api/staff/${id}/`, { method: "PATCH", body: JSON.stringify(body) });
+        return staffFromApi(json);
+      },
+      remove: async (id) => {
+        await apiFetch(`/api/staff/${id}/`, { method: "DELETE" });
+      },
+    };
+
+    /* ============================================================
+       EXAMS API — mock examlar (savollar, bo'limlar) endi backendga
+       (Postgres) saqlanadi. "sections" (frontend) <-> "sections_data"
+       (backend, xom JSON) — shakli o'zgarmaydi, faqat nomi.
+       ============================================================ */
+    function examFromApi(e) {
+      return {
+        id: e.id,
+        title: e.title,
+        examType: e.exam_type,
+        status: e.status,
+        assignedGroupIds: e.assigned_group_ids || [],
+        sections: e.sections_data || {},
+        orgId: e.organization,
+        createdAt: e.created_at,
+        reopenedAt: e.reopened_at,
+        notifSeenBy: e.notif_seen_by || [],
+      };
+    }
+    const examApi = {
+      list: async () => {
+        const json = await apiFetch("/api/exams/");
+        const results = Array.isArray(json) ? json : (json.results || []);
+        return results.map(examFromApi);
+      },
+      create: async (e) => {
+        const body = {
+          id: e.id, title: e.title, exam_type: e.examType || "academic", status: e.status || "on",
+          assigned_groups: e.assignedGroupIds || [], sections_data: e.sections || {},
+        };
+        const json = await apiFetch("/api/exams/", { method: "POST", body: JSON.stringify(body) });
+        return examFromApi(json);
+      },
+      update: async (id, patch) => {
+        const body = {};
+        if (patch.title !== undefined) body.title = patch.title;
+        if (patch.examType !== undefined) body.exam_type = patch.examType;
+        if (patch.status !== undefined) body.status = patch.status;
+        if (patch.assignedGroupIds !== undefined) body.assigned_groups = patch.assignedGroupIds;
+        if (patch.sections !== undefined) body.sections_data = patch.sections;
+        const json = await apiFetch(`/api/exams/${id}/`, { method: "PATCH", body: JSON.stringify(body) });
+        return examFromApi(json);
+      },
+      remove: async (id) => {
+        await apiFetch(`/api/exams/${id}/`, { method: "DELETE" });
+      },
+      toggle: async (id) => {
+        const json = await apiFetch(`/api/exams/${id}/toggle/`, { method: "PATCH" });
+        return json;
+      },
+      reopen: async (id) => {
+        await apiFetch(`/api/exams/${id}/reopen/`, { method: "PATCH" });
+      },
+      markNotifSeen: async (id, notifSeenBy) => {
+        const json = await apiFetch(`/api/exams/${id}/`, { method: "PATCH", body: JSON.stringify({ notif_seen_by: notifSeenBy }) });
+        return examFromApi(json);
+      },
+      /* ---- o'quvchining davom etayotgan urinishi (avval localStorage'da
+         edi — endi ExamAttempt orqali backend'da) ---- */
+      start: async (id) => {
+        const json = await apiFetch(`/api/exams/${id}/start/`);
+        return json.data;
+      },
+      getProgress: async (id) => {
+        try {
+          const json = await apiFetch(`/api/exams/${id}/progress/`);
+          return json.data;
+        } catch (e) {
+          return null;
+        }
+      },
+      saveProgress: async (id, progress) => {
+        await apiFetch(`/api/exams/${id}/save_progress/`, { method: "POST", body: JSON.stringify(progress) });
+      },
+      submit: async (id, progress) => {
+        const json = await apiFetch(`/api/exams/${id}/submit/`, { method: "POST", body: JSON.stringify(progress || {}) });
+        return json.data;
+      },
+    };
+
+    /* ============================================================
+       ASSIGNMENTS API — topshiriqlar endi backendga (Postgres) saqlanadi.
+       ============================================================ */
+    function assignmentFromApi(a) {
+      return {
+        id: a.id,
+        title: a.title,
+        content: a.content || "",
+        fileUrl: a.file_url || "",
+        fileName: a.file_name || "",
+        fileMime: a.file_mime || "",
+        groupIds: a.group_ids || [],
+        targetStudentIds: a.target_student_ids || [],
+        viewedBy: a.viewed_by_ids || [],
+        orgId: a.organization,
+        createdAt: a.created_at,
+      };
+    }
+    const assignmentApi = {
+      list: async () => {
+        const json = await apiFetch("/api/assignments/");
+        const results = Array.isArray(json) ? json : (json.results || []);
+        return results.map(assignmentFromApi);
+      },
+      create: async (a) => {
+        const body = {
+          id: a.id, title: a.title, content: a.content || "", file_url: a.fileUrl || "",
+          file_name: a.fileName || "", file_mime: a.fileMime || "",
+          groups: a.groupIds || [], target_students: a.targetStudentIds || [],
+        };
+        const json = await apiFetch("/api/assignments/", { method: "POST", body: JSON.stringify(body) });
+        return assignmentFromApi(json);
+      },
+      update: async (id, patch) => {
+        const body = {};
+        if (patch.title !== undefined) body.title = patch.title;
+        if (patch.content !== undefined) body.content = patch.content;
+        if (patch.fileUrl !== undefined) body.file_url = patch.fileUrl;
+        if (patch.fileName !== undefined) body.file_name = patch.fileName;
+        if (patch.fileMime !== undefined) body.file_mime = patch.fileMime;
+        if (patch.groupIds !== undefined) body.groups = patch.groupIds;
+        if (patch.targetStudentIds !== undefined) body.target_students = patch.targetStudentIds;
+        if (patch.viewedBy !== undefined) body.viewed_by = patch.viewedBy;
+        const json = await apiFetch(`/api/assignments/${id}/`, { method: "PATCH", body: JSON.stringify(body) });
+        return assignmentFromApi(json);
+      },
+      remove: async (id) => {
+        await apiFetch(`/api/assignments/${id}/`, { method: "DELETE" });
+      },
+      markViewed: async (id, viewedBy) => {
+        const json = await apiFetch(`/api/assignments/${id}/`, { method: "PATCH", body: JSON.stringify({ viewed_by: viewedBy }) });
+        return assignmentFromApi(json);
+      },
+    };
+
+    /* ============================================================
+       RESULTS API — mock exam natijalari endi backendga (Postgres)
+       saqlanadi. "writingText" alohida maydon sifatida backend modelida
+       yo'q — shu sabab umumiy "review_data" JSON ichiga qo'shib
+       yuboriladi (backend model o'zgartirilmasdan).
+       ============================================================ */
+    function resultToApi(r) {
+      return {
+        id: r.id,
+        attempt: r.attemptId || null,
+        student: r.studentId,
+        exam: r.examId,
+        overall_band: r.overallBand,
+        section_scores: r.sectionScores || {},
+        section_bands: r.sectionBands || {},
+        section_raw: r.sectionRaw || {},
+        review_data: { ...(r.review || {}), writingText: r.writingText || { task1: "", task2: "" } },
+        stats: r.stats || {},
+        writing_status: r.writingStatus || "n/a",
+        exam_title: r.examTitle || "",
+        exam_type: r.examType || "academic",
+      };
+    }
+    function resultFromApi(r) {
+      const reviewData = r.review_data || {};
+      const { writingText, ...review } = reviewData;
+      return {
+        id: r.id,
+        studentId: r.student,
+        studentName: r.student_name || "",
+        examId: r.exam,
+        examTitle: r.exam_title_display || r.exam_title || "",
+        examType: r.exam_type || "academic",
+        orgId: r.organization,
+        overallBand: r.overall_band,
+        sectionScores: r.section_scores || {},
+        sectionBands: r.section_bands || {},
+        sectionRaw: r.section_raw || {},
+        review,
+        writingText: writingText || { task1: "", task2: "" },
+        stats: r.stats || {},
+        writingStatus: r.writing_status || "n/a",
+        writingBand: r.writing_band,
+        task1Band: r.task1_band,
+        task2Band: r.task2_band,
+        task1Criteria: r.task1_criteria || {},
+        task2Criteria: r.task2_criteria || {},
+        submittedAt: r.submitted_at,
+      };
+    }
+    const resultApi = {
+      list: async () => {
+        const json = await apiFetch("/api/results/");
+        const results = Array.isArray(json) ? json : (json.results || []);
+        return results.map(resultFromApi);
+      },
+      create: async (r) => {
+        const json = await apiFetch("/api/results/", { method: "POST", body: JSON.stringify(resultToApi(r)) });
+        return resultFromApi(json);
+      },
+      gradeWriting: async (id, payload) => {
+        const json = await apiFetch(`/api/results/${id}/grade_writing/`, { method: "POST", body: JSON.stringify(payload) });
+        return json.data;
       },
     };
 
@@ -673,18 +942,10 @@
     }
 
     /* ============================================================
-       ADMIN ACCOUNTS (fixed demo credentials — real backend later)
-       SUPPORT_ACCOUNT — yagona, platforma darajasidagi hisob (barcha CEO'larni
-       yaratadi/boshqaradi). CEO_ACCOUNT endi faqat MIGRATSIYA uchun ishlatiladi:
-       birinchi marta yangi (multi-tenant) versiya ochilganda, eski (bitta CEO'li)
-       ma'lumotlar shu login/parol bilan "Default o'quv markazi" nomli tashkilotga
-       aylantiriladi — hech qanday eski ma'lumot yo'qolmaydi (pastga q.: MIGRATION).
+       ROLLAR / YORLIQLAR
        ============================================================ */
-    const CEO_ACCOUNT = { username: "ceo", password: "Ceo@2026", name: "Aziza Karimova", role: "ceo" };
-    const SUPPORT_ACCOUNT = { username: "support", password: "Support@2026", name: "Jasur Toshpulatov", role: "support" };
-
     /* Xodim rollari (CEO ostida). Har biri bitta "organizations" yozuviga (orgId)
-       biriktirilgan holda "orgStaff" jadvalida saqlanadi. */
+       biriktirilgan holda backend'dagi Staff API orqali saqlanadi. */
     const STAFF_ROLES = [
       { value: "admin", label: "Admin" },
       { value: "manager", label: "Manager" },
@@ -706,110 +967,6 @@
     }
     function genId(prefix) {
       return uid(prefix);
-    }
-
-    /* ============================================================
-       SEED DATA
-       ============================================================ */
-    function buildSeed() {
-      const groups = [];
-      [
-        { name: "IELTS-101 (Boshlang'ich)", level: "Beginner" },
-        { name: "IELTS-205 (O'rta)", level: "Intermediate" },
-        { name: "IELTS-Pro (Yuqori)", level: "Advanced" },
-      ].forEach((g) => {
-        groups.push({ id: genGroupId(groups), name: g.name, level: g.level, createdAt: Date.now() });
-      });
-      const names = [
-        "Dilnoza Yusupova", "Sardor Aliyev", "Malika Nazarova", "Otabek Rustamov",
-        "Kamola Ergasheva", "Bekzod Islomov", "Nigora Saidova", "Jahongir Mirzayev",
-        "Zarina Qodirova", "Farrux Xolmatov",
-      ];
-      const students = [];
-      names.forEach((name, i) => {
-        const groupId = groups[i % groups.length].id;
-        const username = usernameFromName(name, students);
-        students.push({
-          id: uid("stu"),
-          name,
-          username,
-          password: randomPassword6(),
-          groupId,
-          createdAt: Date.now() - i * 86400000,
-        });
-      });
-      const exams = [
-        {
-          id: uid("exam"),
-          title: "IELTS Mock #1 — Umumiy Tekshiruv",
-          status: "on",
-          examType: "academic",
-          assignedGroupIds: [groups[0].id, groups[1].id],
-          createdAt: Date.now(),
-          reopenedAt: null,
-          notifSeenBy: [],
-          sections: {
-            listening: {
-              enabled: true,
-              audioUrl: "",
-              instructions: "Audio yozuvni tinglang va savollarga javob bering.",
-              parts: [
-                {
-                  id: uid("part"),
-                  title: "Part 1",
-                  questions: [
-                    { id: uid("q"), q: "Suhbat qayerda bo'lib o'tmoqda?", answerType: "mcq", options: ["Kutubxonada", "Restoranda", "Aeroportda", "Do'konda"], correctIndex: 2 },
-                    { id: uid("q"), q: "Reys nechada boshlanadi?", answerType: "mcq", options: ["09:00", "10:30", "14:00", "16:15"], correctIndex: 1 },
-                  ],
-                },
-              ],
-            },
-            reading: {
-              enabled: true,
-              instructions: "Matnni o'qing (kerakli joylarni belgilashingiz mumkin) va savollarga javob bering.",
-              passage: `Climate change is one of the most pressing issues of our time. Rising global temperatures have led to melting ice caps, rising sea levels, and increasingly unpredictable weather patterns. Scientists agree that human activity, particularly the burning of fossil fuels, is the primary driver of these changes. Governments around the world are now under pressure to reduce carbon emissions and invest in renewable energy sources such as solar and wind power. However, the transition to a low-carbon economy presents significant economic and political challenges, especially for countries that rely heavily on fossil fuel industries for employment and revenue.`,
-              questions: [
-                { id: uid("q"), q: "Iqlim o'zgarishining asosiy sababi nima deb ko'rsatilgan?", options: ["Vulqon otilishi", "Inson faoliyati", "Quyosh nurlanishi", "Okean oqimlari"], correctIndex: 1 },
-                { id: uid("q"), q: "Matnda qaysi energiya turlari misol qilib keltirilgan?", options: ["Ko'mir va neft", "Quyosh va shamol", "Yadro va gaz", "Ko'mir va gaz"], correctIndex: 1 },
-              ],
-            },
-            writing: {
-              enabled: true,
-              task1: {
-                prompt: "Quyidagi diagramma 2010—2020-yillarda uchta mamlakatda internetdan foydalanuvchilar foizini ko'rsatadi. Asosiy tendensiyalarni umumlashtiring va taqqoslang.",
-                imageUrl: "", imageName: "", imageMime: "",
-                minWords: 150,
-              },
-              task2: {
-                prompt: "Ba'zi odamlar texnologiya ta'lim tizimini yaxshilayapti deb hisoblaydi, boshqalari esa aksincha fikrda. O'z fikringizni bildiring va misollar bilan asoslang.",
-                minWords: 250,
-              },
-            },
-            vocabulary: {
-              enabled: true,
-              questions: [
-                { id: uid("q"), q: "'Mitigate' so'zining ma'nosi:", options: ["Kuchaytirmoq", "Yumshatmoq / kamaytirmoq", "E'lon qilmoq", "Rad etmoq"], correctIndex: 1 },
-                { id: uid("q"), q: "'Sustainable' so'zining ma'nosi:", options: ["Barqaror / davomiy", "Vaqtinchalik", "Foydasiz", "Qimmat"], correctIndex: 0 },
-              ],
-            },
-          },
-        },
-      ];
-      const assignments = [
-        {
-          id: uid("asg"),
-          title: "Uy vazifasi: Essay yozish (Environment)",
-          type: "text",
-          content: "Atrof-muhitni asrash bo'yicha 250 so'zdan iborat insho yozing va topshiring.",
-          fileUrl: "",
-          groupId: groups[0].id,
-          targetStudentIds: [],
-          createdAt: Date.now() - 2 * 86400000,
-          viewedBy: [],
-        },
-      ];
-      const results = [];
-      return { groups, students, exams, assignments, results };
     }
 
     /* ============================================================
@@ -1825,7 +1982,8 @@
     /* ============================================================
        SIDEBAR / SHELL
        ============================================================ */
-    const SIDEBAR_COLLAPSE_KEY = "ielts_sidebar_collapsed_v1";
+    /* Sidebar collapsed holati ham endi backend'dagi foydalanuvchi profilida
+       ("sidebar_collapsed" maydoni) saqlanadi — pastga qarang: preferencesApi. */
     const SIDEBAR_W_OPEN = 248;
     const SIDEBAR_W_COLLAPSED = 76;
 
@@ -2650,25 +2808,44 @@
                 <div className="rounded-xl p-4 space-y-2.5" style={{ backgroundColor: C.paperDim }}>
                   <div className="flex justify-between text-[13.5px]"><span style={{ color: C.muted }}>Ism</span><span className="font-semibold" style={{ color: C.text }}>{viewPwFor.name}</span></div>
                   <CopyField label="Username" value={viewPwFor.username} />
-                  <CopyField
-                    label="Parol"
-                    value={viewPwFor.password}
-                    trailing={
-                      <button
-                        type="button"
+                  {viewPwFor.password ? (
+                    <CopyField
+                      label="Parol"
+                      value={viewPwFor.password}
+                      trailing={
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const newPassword = randomPassword6();
+                            await actions.updateStudent(viewPwFor.id, { password: newPassword });
+                            setViewPwFor((v) => ({ ...v, password: newPassword }));
+                            toast("success", "Yangi parol yaratildi");
+                          }}
+                          title="Parolni yangilash"
+                          className="p-1.5 rounded-lg hover:bg-black/5"
+                        >
+                          <Icon name="rotate" size={13} style={{ color: C.mutedSoft }} />
+                        </button>
+                      }
+                    />
+                  ) : (
+                    <div className="space-y-2.5">
+                      <div className="text-[12.5px]" style={{ color: C.mutedSoft }}>
+                        Parol xavfsizlik uchun bazada shifrlangan holda saqlanadi va qayta ko'rsatib bo'lmaydi. O'quvchiga yangi parol berish uchun pastdagi tugmani bosing.
+                      </div>
+                      <Button
+                        size="sm" variant="teal" icon="rotate"
                         onClick={async () => {
                           const newPassword = randomPassword6();
                           await actions.updateStudent(viewPwFor.id, { password: newPassword });
                           setViewPwFor((v) => ({ ...v, password: newPassword }));
                           toast("success", "Yangi parol yaratildi");
                         }}
-                        title="Parolni yangilash"
-                        className="p-1.5 rounded-lg hover:bg-black/5"
                       >
-                        <Icon name="rotate" size={13} style={{ color: C.mutedSoft }} />
-                      </button>
-                    }
-                  />
+                        Yangi parol yaratish
+                      </Button>
+                    </div>
+                  )}
                 </div>
                 <div className="text-[12px]" style={{ color: C.mutedSoft }}>Nusxalash uchun username yoki parol ustiga bosing.</div>
                 <div className="flex justify-end"><Button onClick={() => setViewPwFor(null)} icon="check">Yopish</Button></div>
@@ -3901,7 +4078,7 @@
     // Full CEO / Support profile: editable personal info + avatar, password
     // change, a user-management list (students, always deletable; the other
     // admin account visible only from Support's side), and logout.
-    function AdminProfile({ session, user, myOrg, adminProfiles, data, actions, toast, onLogout, onGoToStudents }) {
+    function AdminProfile({ session, user, myOrg, data, actions, toast, onLogout, onGoToStudents }) {
       const role = session.role; // "ceo" | "admin" | "manager" | "teacher"
       const roleLabel = ROLE_LABELS[role] || role;
       const isCeo = role === "ceo";
@@ -3951,15 +4128,15 @@
 
       const changePassword = async () => {
         if (!curPw) { toast("error", "Joriy parolni kiriting"); return; }
-        if (curPw !== user.password) { toast("error", "Joriy parol noto'g'ri"); return; }
         if (newPw.length < 4) { toast("error", "Yangi parol kamida 4 belgi bo'lishi kerak"); return; }
         if (newPw !== confirmPw) { toast("error", "Parollar mos kelmadi"); return; }
         setPwSaving(true);
-        if (isCeo) await actions.updateOrganization(session.orgId, { password: newPw });
-        else await actions.updateOrgStaff(session.user.id, { password: newPw });
+        const ok = await actions.changeMyPassword(curPw, newPw);
         setPwSaving(false);
-        setCurPw(""); setNewPw(""); setConfirmPw("");
-        toast("success", "Parol muvaffaqiyatli o'zgartirildi");
+        if (ok) {
+          setCurPw(""); setNewPw(""); setConfirmPw("");
+          toast("success", "Parol muvaffaqiyatli o'zgartirildi");
+        }
       };
 
       /* ---- foydalanuvchilar (o'quvchilar ro'yxati — tezkor o'chirish) ---- */
@@ -4055,12 +4232,17 @@
       );
     }
 
-    function AdminApp({ session, data, actions, onLogout, toast, adminProfiles, organizations, orgStaff }) {
+    function AdminApp({ session, data, actions, onLogout, toast, organizations, orgStaff }) {
       const [tab, setTab] = useState("overview");
-      const [collapsed, setCollapsed] = useState(() => {
-        try { return JSON.parse(localStorage.getItem(SIDEBAR_COLLAPSE_KEY) || "false"); } catch (e) { return false; }
-      });
-      useEffect(() => { try { localStorage.setItem(SIDEBAR_COLLAPSE_KEY, JSON.stringify(collapsed)); } catch (e) { } }, [collapsed]);
+      const [collapsedState, setCollapsedState] = useState(!!session.user?.sidebarCollapsed);
+      const setCollapsed = (next) => {
+        setCollapsedState((c) => {
+          const value = typeof next === "function" ? next(c) : next;
+          actions.setSidebarCollapsed(value);
+          return value;
+        });
+      };
+      const collapsed = collapsedState;
 
       /* "Texnik xizmat" — footer tugmasi orqali ochiladigan modal (support
          rolidan tashqari barcha rollarda: CEO/Admin/Manager/Teacher). */
@@ -4076,7 +4258,11 @@
         }
       };
 
-      const myOrg = organizations.find((o) => o.id === session.orgId) || null;
+      /* "organizations" ro'yxati endi faqat Support uchun to'liq keladi (backend
+         cheklovi) — CEO/Admin/Manager/Teacher esa o'z tashkiloti haqidagi ochiq
+         ma'lumotni to'g'ridan-to'g'ri profilidan (session.user.organizationDetail)
+         oladi, alohida ro'yxatni qidirishning hojati yo'q. */
+      const myOrg = session.user?.organizationDetail || organizations.find((o) => o.id === session.orgId) || null;
       const canStaff = canManageStaff(session.role); // ceo | admin
 
       // ROLE-BASED TABS: Manager/Teacher "Xodimlar" bo'limini ko'rmaydi — faqat
@@ -4092,12 +4278,12 @@
       ];
       const titles = { overview: "Umumiy ko'rinish", groups: "Guruhlar", students: "O'quvchilar", exams: "Mock Examlar", assignments: "Vazifalar", staff: "Xodimlar", profile: "Profil" };
 
-      // CEO/Admin/Manager/Teacher — profil ma'lumotlari endi o'zining tegishli
-      // manbasidan (CEO -> organizations, staff -> orgStaff) jonli o'qiladi, shu
-      // bilan tahrirlash darhol UI'da ko'rinadi (avvalgi bitta-CEO'li versiyadagi
-      // "adminProfiles" overlay endi faqat Support uchun ishlatiladi).
+      // CEO uchun profil ma'lumotlari to'g'ridan-to'g'ri session.user'da (backend
+      // ProfileView ceo tarmog'idan keladi: name/username/phone/email/avatar).
+      // Admin/Manager/Teacher uchun esa "orgStaff" ro'yxatidagi (yoki uning
+      // yo'qligida session.user'dagi) yozuv ishlatiladi.
       const effectiveUser = session.role === "ceo"
-        ? { id: myOrg?.id, name: myOrg?.ceoName, username: myOrg?.username, phone: myOrg?.phone, email: myOrg?.email, avatar: myOrg?.avatar, password: myOrg?.password }
+        ? session.user
         : (orgStaff.find((s) => s.id === session.user.id) || session.user);
 
       // Bildirishnomalar — hozircha baholanishi kerak bo'lgan Writing ishlari.
@@ -4145,7 +4331,6 @@
                   session={session}
                   user={effectiveUser}
                   myOrg={myOrg}
-                  adminProfiles={adminProfiles}
                   data={data}
                   actions={actions}
                   toast={toast}
@@ -4314,25 +4499,44 @@
                 <div className="rounded-xl p-4 space-y-2.5" style={{ backgroundColor: C.paperDim }}>
                   <div className="flex justify-between text-[13.5px]"><span style={{ color: C.muted }}>Ism</span><span className="font-semibold" style={{ color: C.text }}>{viewPwFor.name}</span></div>
                   <CopyField label="Username" value={viewPwFor.username} />
-                  <CopyField
-                    label="Parol"
-                    value={viewPwFor.password}
-                    trailing={
-                      <button
-                        type="button"
+                  {viewPwFor.password ? (
+                    <CopyField
+                      label="Parol"
+                      value={viewPwFor.password}
+                      trailing={
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const newPassword = randomPassword6();
+                            await actions.updateOrgStaff(viewPwFor.id, { password: newPassword });
+                            setViewPwFor((v) => ({ ...v, password: newPassword }));
+                            toast("success", "Yangi parol yaratildi");
+                          }}
+                          title="Parolni yangilash"
+                          className="p-1.5 rounded-lg hover:bg-black/5"
+                        >
+                          <Icon name="rotate" size={13} style={{ color: C.mutedSoft }} />
+                        </button>
+                      }
+                    />
+                  ) : (
+                    <div className="space-y-2.5">
+                      <div className="text-[12.5px]" style={{ color: C.mutedSoft }}>
+                        Parol xavfsizlik uchun bazada shifrlangan holda saqlanadi va qayta ko'rsatib bo'lmaydi. Xodimga yangi parol berish uchun pastdagi tugmani bosing.
+                      </div>
+                      <Button
+                        size="sm" variant="teal" icon="rotate"
                         onClick={async () => {
                           const newPassword = randomPassword6();
                           await actions.updateOrgStaff(viewPwFor.id, { password: newPassword });
                           setViewPwFor((v) => ({ ...v, password: newPassword }));
                           toast("success", "Yangi parol yaratildi");
                         }}
-                        title="Parolni yangilash"
-                        className="p-1.5 rounded-lg hover:bg-black/5"
                       >
-                        <Icon name="rotate" size={13} style={{ color: C.mutedSoft }} />
-                      </button>
-                    }
-                  />
+                        Yangi parol yaratish
+                      </Button>
+                    </div>
+                  )}
                 </div>
                 <div className="flex justify-end"><Button onClick={() => setViewPwFor(null)} icon="check">Yopish</Button></div>
               </div>
@@ -4703,34 +4907,50 @@
     function ExamRunner({ exam, student, onExit, onSubmit, toast }) {
       const sectionKeys = useMemo(() => Object.entries(exam.sections).filter(([, v]) => v.enabled).map(([k]) => k), [exam]);
 
-      /* Avvalgi (tugallanmagan) session bormi — faqat BIR marta, komponent
-         birinchi render qilinganda tekshiramiz (keyingi renderlarda localStorage'ni
-         qayta o'qimaymiz, aks holda foydalanuvchining joriy o'zgarishlari ustidan
-         eski holat qayta yozilib qolishi mumkin). */
-      const savedRef = useRef(undefined);
-      if (savedRef.current === undefined) {
-        savedRef.current = (() => {
-          try {
-            const raw = localStorage.getItem(K.examProgress);
-            if (!raw) return null;
-            const s = JSON.parse(raw);
-            if (s && s.examId === exam.id && s.studentId === student.id) return s;
-          } catch (e) { }
-          return null;
-        })();
-      }
-      const saved = savedRef.current;
+      /* Avvalgi (tugallanmagan) urinish bormi — endi backend'dagi ExamAttempt
+         orqali tekshiriladi (examApi.start: mavjud bo'lsa qaytaradi, bo'lmasa
+         yangisini yaratadi). Shu tufayli sahifa qayta yuklansa (refresh),
+         tab yopilib qaytadan ochilsa yoki boshqa qurilmadan kirilsa ham javoblar
+         yo'qolmaydi va taymer noldan qayta boshlanmaydi. */
+      const [loaded, setLoaded] = useState(false);
+      const attemptIdRef = useRef(null);
 
-      const [idx, setIdx] = useState(saved ? saved.idx : 0); // 0..sectionKeys.length-1 = sections, sectionKeys.length = review
-      const [answers, setAnswers] = useState(saved ? saved.answers : { listening: {}, reading: {}, vocabulary: {} });
-      const [writingText, setWritingText] = useState(saved ? saved.writingText : { task1: "", task2: "" });
-      const [writingTask, setWritingTask] = useState(saved ? saved.writingTask : 1); // 1 yoki 2 — Writing bo'limi ichidagi ikki task orasidagi tab
-      const [flagged, setFlagged] = useState(saved ? saved.flagged : {});
+      const [idx, setIdx] = useState(0); // 0..sectionKeys.length-1 = sections, sectionKeys.length = review
+      const [answers, setAnswers] = useState({ listening: {}, reading: {}, vocabulary: {} });
+      const [writingText, setWritingText] = useState({ task1: "", task2: "" });
+      const [writingTask, setWritingTask] = useState(1); // 1 yoki 2 — Writing bo'limi ichidagi ikki task orasidagi tab
+      const [flagged, setFlagged] = useState({});
       const [submitting, setSubmitting] = useState(false);
       const [notepadOpen, setNotepadOpen] = useState(false);
-      const [notepadText, setNotepadText] = useState(saved ? saved.notepadText || "" : "");
-      const [fontLevel, setFontLevel] = useState(saved && saved.fontLevel != null ? saved.fontLevel : 1);
+      const [notepadText, setNotepadText] = useState("");
+      const [fontLevel, setFontLevel] = useState(1);
       const [confirmExit, setConfirmExit] = useState(false);
+      const [sectionDeadlines, setSectionDeadlines] = useState({});
+
+      useEffect(() => {
+        let cancelled = false;
+        (async () => {
+          try {
+            const a = await examApi.start(exam.id);
+            if (cancelled) return;
+            attemptIdRef.current = a.id;
+            setIdx(a.current_section_index || 0);
+            setAnswers(a.answers && Object.keys(a.answers).length ? a.answers : { listening: {}, reading: {}, vocabulary: {} });
+            setWritingText(a.writing_text && (a.writing_text.task1 !== undefined) ? a.writing_text : { task1: "", task2: "" });
+            setWritingTask((a.progress_data && a.progress_data.writingTask) || 1);
+            setFlagged(a.flagged || {});
+            setNotepadText(a.notepad_text || "");
+            setFontLevel(a.font_level != null ? a.font_level : 1);
+            setSectionDeadlines(a.section_deadlines || {});
+          } catch (e) {
+            toast("error", "Imtihon holati yuklanmadi — internetni tekshiring");
+          } finally {
+            if (!cancelled) setLoaded(true);
+          }
+        })();
+        return () => { cancelled = true; };
+      }, [exam.id]); // eslint-disable-line
+
       /* Har bir bo'lim uchun "tugash vaqti" — absolute Unix timestamp (ms).
          MUHIM: bo'limga birinchi marta kirilganda o'rnatiladi va keyin
          o'sha bo'limga qayta kirilsa (Oldingi/Keyingi tugmalari yoki
@@ -4738,7 +4958,6 @@
          O'RNATILMAYDI — aks holda foydalanuvchi bo'limlar orasida oldinga-orqaga
          yurib, har safar to'liq yangi vaqt olib, taymerni cheksiz uzaytirishi
          mumkin bo'lar edi. */
-      const [sectionDeadlines, setSectionDeadlines] = useState(saved ? saved.sectionDeadlines || {} : {});
       const isReview = idx >= sectionKeys.length;
       const currentKey = sectionKeys[idx];
 
@@ -4786,6 +5005,17 @@
         });
       };
 
+      const buildProgressPayload = () => ({
+        current_section_index: idx,
+        answers,
+        writing_text: writingText,
+        flagged,
+        notepad_text: notepadText,
+        font_level: fontLevel,
+        section_deadlines: sectionDeadlines,
+        progress_data: { writingTask },
+      });
+
       const submit = async () => {
         setSubmitting(true);
         const listeningPct = scoreSection("listening");
@@ -4810,7 +5040,7 @@
         const accuracy = allReview.length ? Math.round((correctCount / allReview.length) * 100) : null;
 
         const result = {
-          id: uid("res"), studentId: student.id, examId: exam.id, submittedAt: Date.now(),
+          id: uid("res"), studentId: student.id, examId: exam.id, attemptId: attemptIdRef.current, submittedAt: Date.now(),
           examType: exam.examType || "academic",
           examTitle: exam.title,
           sectionScores: { listening: listeningPct, reading: readingPct, vocabulary: vocabPct },
@@ -4822,15 +5052,19 @@
           writingStatus: hasWriting ? "pending_review" : "n/a",
           overallBand,
         };
+        try {
+          /* Attempt'ni backend'da "submitted" deb belgilaymiz — shu bilan
+             keyingi safar shu examga kirilsa yangi urinish boshlanadi. */
+          await examApi.submit(exam.id, buildProgressPayload());
+        } catch (e) { /* natija baribir saqlanaveradi — kritik emas */ }
         await onSubmit(result);
         setSubmitting(false);
-        try { localStorage.removeItem(K.examProgress); } catch (e) { }
         toast("success", "Mock exam topshirildi!");
         onExit();
       };
 
       /* Per-section countdown — bo'limga birinchi kirilganda "tugash vaqti"
-         (deadline) o'rnatiladi va localStorage'ga saqlanadi; qolgan vaqt shu
+         (deadline) o'rnatiladi va (debounce bilan) backend'ga saqlanadi; qolgan vaqt shu
          deadline bilan HAQIQIY vaqt (Date.now()) orasidagi farq sifatida
          hisoblanadi. Bu, oldingi setTimeout-tick usulidan farqli o'laroq:
          - brauzer tab fon rejimida sekinlashtirilganda (throttling) yoki
@@ -4866,17 +5100,33 @@
       }, [isReview, deadline, currentKey]); // eslint-disable-line
 
       /* Autosave: javoblar, joriy bo'lim va bo'lim deadline'lari har o'zgarishda
-         localStorage'ga yoziladi — refresh/tab yopilish holatida hech narsa
-         yo'qolmasligi va keyinroq "davom ettirish" mumkin bo'lishi uchun. Faqat
-         topshirilganda (submit) tozalanadi (pastga qarang). */
+         backend'ga (ExamAttempt) yoziladi — refresh/tab yopilish yoki boshqa
+         qurilmadan kirish holatida ham hech narsa yo'qolmasligi va keyinroq
+         "davom ettirish" mumkin bo'lishi uchun. Tez-tez (masalan har harf
+         kiritilganda) so'rov yubormaslik uchun 1.2 soniyalik debounce bilan.
+         Faqat topshirilganda (submit) yoki komponent almashtirilganda
+         (endgame) so'nggi holat darhol yuboriladi. */
+      const saveTimerRef = useRef(null);
+      const latestStateRef = useRef(null);
+      latestStateRef.current = buildProgressPayload();
       useEffect(() => {
-        try {
-          localStorage.setItem(K.examProgress, JSON.stringify({
-            examId: exam.id, studentId: student.id, idx, answers, writingText, writingTask,
-            flagged, notepadText, fontLevel, sectionDeadlines, savedAt: Date.now(),
-          }));
-        } catch (e) { }
-      }, [idx, answers, writingText, writingTask, flagged, notepadText, fontLevel, sectionDeadlines]); // eslint-disable-line
+        if (!loaded) return;
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = setTimeout(() => {
+          examApi.saveProgress(exam.id, latestStateRef.current).catch(() => { });
+        }, 1200);
+        return () => clearTimeout(saveTimerRef.current);
+      }, [loaded, idx, answers, writingText, writingTask, flagged, notepadText, fontLevel, sectionDeadlines]); // eslint-disable-line
+
+      /* Komponent yo'q qilinganda (chiqishda) so'nggi holatni darhol (debounce'siz)
+         yuboramiz — aks holda oxirgi 1.2 soniyadagi o'zgarish yo'qolib qolishi mumkin. */
+      useEffect(() => {
+        return () => {
+          if (loaded && latestStateRef.current) {
+            examApi.saveProgress(exam.id, latestStateRef.current).catch(() => { });
+          }
+        };
+      }, []); // eslint-disable-line
 
       /* Sahifani tasodifan yopish/yangilashdan ogohlantirish — javoblar endi
          saqlanib qolsa-da, taymer shu orada ham ishlashda davom etadi. */
@@ -4892,6 +5142,18 @@
       const wordCount2 = countWords(writingText.task2);
       const fontScale = FONT_SCALES[fontLevel];
       const timeLow = !isReview && remaining <= 60;
+
+      if (!loaded) {
+        return (
+          <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: C.paper }}>
+            {FONTS}
+            <div className="flex flex-col items-center gap-3">
+              <Icon name="spinner" size={26} className="fa-spin" style={{ color: C.ink }} />
+              <div className="text-[13px] f-body" style={{ color: C.muted }}>Imtihon holati yuklanmoqda...</div>
+            </div>
+          </div>
+        );
+      }
 
       return (
         <div className="min-h-screen" style={{ backgroundColor: C.paper }}>
@@ -5517,12 +5779,20 @@
     }
 
     function StudentApp({ session, data, actions, onLogout, toast, organizations }) {
-      const myOrg = (organizations || []).find((o) => o.id === session.orgId) || null;
+      /* "organizations" ro'yxati endi faqat Support uchun to'liq keladi — bu
+         yerda (o'quvchi ilovasida) o'z tashkiloti haqidagi ma'lumot esa
+         to'g'ridan-to'g'ri profildan (session.user.organizationDetail). */
+      const myOrg = session.user?.organizationDetail || (organizations || []).find((o) => o.id === session.orgId) || null;
       const [tab, setTab] = useState("overview");
-      const [collapsed, setCollapsed] = useState(() => {
-        try { return JSON.parse(localStorage.getItem(SIDEBAR_COLLAPSE_KEY) || "false"); } catch (e) { return false; }
-      });
-      useEffect(() => { try { localStorage.setItem(SIDEBAR_COLLAPSE_KEY, JSON.stringify(collapsed)); } catch (e) { } }, [collapsed]);
+      const [collapsedState, setCollapsedState] = useState(!!session.user?.sidebarCollapsed);
+      const setCollapsed = (next) => {
+        setCollapsedState((c) => {
+          const value = typeof next === "function" ? next(c) : next;
+          actions.setSidebarCollapsed(value);
+          return value;
+        });
+      };
+      const collapsed = collapsedState;
       /* "Texnik xizmat" — footer tugmasi orqali ochiladigan modal. */
       const [showSupport, setShowSupport] = useState(false);
       const [supportSending, setSupportSending] = useState(false);
@@ -5542,25 +5812,28 @@
       const group = data.groups.find((g) => g.id === student.groupId);
 
       /* "Resume exam": agar o'quvchi mockni tugatmasdan chiqib ketgan/sahifani
-         yopib qo'ygan bo'lsa (localStorage'da tugallanmagan session bo'lsa),
+         yopib qo'ygan bo'lsa (backend'da tugallanmagan ExamAttempt bo'lsa),
          dashboard ochilishi bilan o'sha examga avtomatik qaytariladi — javoblari
-         va taymeri saqlanib qolgan holda. Agar exam allaqachon topshirilgan yoki
-         endi mavjud/ochiq bo'lmasa, eskirgan holatni tozalab qo'yamiz. */
+         va taymeri saqlanib qolgan holda (ExamRunner o'zi examApi.start orqali
+         tiklaydi). O'ziga tegishli, hozir "on" va guruhiga biriktirilgan har
+         bir examdan birortasida tugallanmagan urinish bormi — shuni tekshiramiz. */
       useEffect(() => {
-        let saved = null;
-        try {
-          const raw = localStorage.getItem(K.examProgress);
-          if (raw) saved = JSON.parse(raw);
-        } catch (e) { }
-        if (!saved || saved.studentId !== student.id) return;
-        const alreadySubmitted = data.results.some((r) => r.studentId === student.id && r.examId === saved.examId && (!data.exams.find((e) => e.id === saved.examId)?.reopenedAt || r.submittedAt > data.exams.find((e) => e.id === saved.examId).reopenedAt));
-        const ex = data.exams.find((e) => e.id === saved.examId && e.status === "on" && e.assignedGroupIds.includes(student.groupId));
-        if (ex && !alreadySubmitted) {
-          setActiveExam(ex);
-          toast("success", "Tugallanmagan mock exam davom ettirilmoqda — javoblaringiz saqlangan.");
-        } else {
-          try { localStorage.removeItem(K.examProgress); } catch (e) { }
-        }
+        let cancelled = false;
+        (async () => {
+          const candidates = data.exams.filter((e) => e.status === "on" && e.assignedGroupIds.includes(student.groupId));
+          for (const ex of candidates) {
+            try {
+              const progress = await examApi.getProgress(ex.id);
+              if (cancelled) return;
+              if (progress) {
+                setActiveExam(ex);
+                toast("success", "Tugallanmagan mock exam davom ettirilmoqda — javoblaringiz saqlangan.");
+                return;
+              }
+            } catch (e) { /* davom etayotgan urinish yo'q — jim o'tkazamiz */ }
+          }
+        })();
+        return () => { cancelled = true; };
       }, []); // eslint-disable-line
 
       const myAssignments = data.assignments.filter((a) => assignmentTargetsStudent(a, student));
@@ -6037,25 +6310,44 @@
                 <div className="rounded-xl p-4 space-y-2.5" style={{ backgroundColor: C.paperDim }}>
                   <div className="flex justify-between text-[13.5px]"><span style={{ color: C.muted }}>Ism</span><span className="font-semibold" style={{ color: C.text }}>{viewPwFor.name}</span></div>
                   <CopyField label="Username" value={viewPwFor.username} />
-                  <CopyField
-                    label="Parol"
-                    value={viewPwFor.password}
-                    trailing={
-                      <button
-                        type="button"
+                  {viewPwFor.password ? (
+                    <CopyField
+                      label="Parol"
+                      value={viewPwFor.password}
+                      trailing={
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const newPassword = randomPassword6();
+                            await actions.updateOrgStaff(viewPwFor.id, { password: newPassword });
+                            setViewPwFor((v) => ({ ...v, password: newPassword }));
+                            toast("success", "Yangi parol yaratildi");
+                          }}
+                          title="Parolni yangilash"
+                          className="p-1.5 rounded-lg hover:bg-black/5"
+                        >
+                          <Icon name="rotate" size={13} style={{ color: C.mutedSoft }} />
+                        </button>
+                      }
+                    />
+                  ) : (
+                    <div className="space-y-2.5">
+                      <div className="text-[12.5px]" style={{ color: C.mutedSoft }}>
+                        Parol xavfsizlik uchun bazada shifrlangan holda saqlanadi va qayta ko'rsatib bo'lmaydi. Xodimga yangi parol berish uchun pastdagi tugmani bosing.
+                      </div>
+                      <Button
+                        size="sm" variant="teal" icon="rotate"
                         onClick={async () => {
                           const newPassword = randomPassword6();
                           await actions.updateOrgStaff(viewPwFor.id, { password: newPassword });
                           setViewPwFor((v) => ({ ...v, password: newPassword }));
                           toast("success", "Yangi parol yaratildi");
                         }}
-                        title="Parolni yangilash"
-                        className="p-1.5 rounded-lg hover:bg-black/5"
                       >
-                        <Icon name="rotate" size={13} style={{ color: C.mutedSoft }} />
-                      </button>
-                    }
-                  />
+                        Yangi parol yaratish
+                      </Button>
+                    </div>
+                  )}
                 </div>
                 <div className="flex justify-end"><Button onClick={() => setViewPwFor(null)} icon="check">Yopish</Button></div>
               </div>
@@ -6074,12 +6366,17 @@
       );
     }
 
-    function SupportApp({ session, organizations, orgStaff, actions, onLogout, toast, adminProfiles, supportTickets }) {
+    function SupportApp({ session, organizations, orgStaff, actions, onLogout, toast, supportTickets }) {
       const [tab, setTab] = useState("organizations");
-      const [collapsed, setCollapsed] = useState(() => {
-        try { return JSON.parse(localStorage.getItem(SIDEBAR_COLLAPSE_KEY) || "false"); } catch (e) { return false; }
-      });
-      useEffect(() => { try { localStorage.setItem(SIDEBAR_COLLAPSE_KEY, JSON.stringify(collapsed)); } catch (e) { } }, [collapsed]);
+      const [collapsedState, setCollapsedState] = useState(!!session.user?.sidebarCollapsed);
+      const setCollapsed = (next) => {
+        setCollapsedState((c) => {
+          const value = typeof next === "function" ? next(c) : next;
+          actions.setSidebarCollapsed(value);
+          return value;
+        });
+      };
+      const collapsed = collapsedState;
 
       const tickets = supportTickets || [];
       const unseenTickets = tickets.filter((t) => !t.seen);
@@ -6090,7 +6387,7 @@
         { key: "profile", label: "Profil", icon: "user" },
       ];
       const titles = { organizations: "Tashkilotlar (CEO'lar)", tickets: "Texnik xizmat murojaatlari", profile: "Profil" };
-      const effectiveUser = { ...session.user, ...(adminProfiles.support || {}) };
+      const effectiveUser = session.user;
 
       const [name, setName] = useState(effectiveUser.name || "");
       const [phone, setPhone] = useState(effectiveUser.phone || "");
@@ -6107,14 +6404,15 @@
       };
       const changePassword = async () => {
         if (!curPw) { toast("error", "Joriy parolni kiriting"); return; }
-        if (curPw !== effectiveUser.password) { toast("error", "Joriy parol noto'g'ri"); return; }
         if (newPw.length < 4) { toast("error", "Yangi parol kamida 4 belgi bo'lishi kerak"); return; }
         if (newPw !== confirmPw) { toast("error", "Parollar mos kelmadi"); return; }
         setPwSaving(true);
-        await actions.changeAdminPassword("support", newPw);
+        const ok = await actions.changeMyPassword(curPw, newPw);
         setPwSaving(false);
-        setCurPw(""); setNewPw(""); setConfirmPw("");
-        toast("success", "Parol o'zgartirildi");
+        if (ok) {
+          setCurPw(""); setNewPw(""); setConfirmPw("");
+          toast("success", "Parol o'zgartirildi");
+        }
       };
 
       const notifications = unseenTickets
@@ -6254,16 +6552,6 @@
     }
     const FIXED_ROLE = typeof window !== "undefined" ? resolveRoleFromUrl() : "student";
 
-    function getInitialTheme() {
-      try {
-        const raw = localStorage.getItem(THEME_KEY);
-        const t = raw ? JSON.parse(raw) : null;
-        return t === "dark" ? "dark" : "light";
-      } catch (e) {
-        return "light";
-      }
-    }
-
     function App() {
       const [view, setView] = useState(FIXED_ROLE ? "login" : "landing"); // landing | login-* | app
       const [loginRole, setLoginRole] = useState(FIXED_ROLE);
@@ -6274,6 +6562,25 @@
       const [ready, setReady] = useState(false);
       const [data, setData] = useState({ groups: [], students: [], exams: [], assignments: [], results: [] });
       const [toasts, setToasts] = useState([]);
+
+      /* Backend snake_case (theme/sidebar_collapsed) <-> frontend camelCase.
+         Har doim session.user shu shaklda saqlanadi. "organizationDetail" —
+         foydalanuvchining o'z tashkiloti haqidagi ochiq ma'lumot (nomi,
+         Telegram Chat ID, holati) — CEO uchun ProfileView.get()dagi ichki
+         "organization" obyektidan, boshqa xodim/o'quvchi uchun esa
+         "organization_detail"dan olinadi (ikkalasi ham backend'dan keladi,
+         localStorage yoki alohida "organizations" ro'yxati kerak emas). */
+      function normalizeSessionUser(u) {
+        const rawOrg = u.organization_detail || (u.organization && typeof u.organization === "object" ? u.organization : null);
+        const organizationDetail = rawOrg ? {
+          id: rawOrg.id,
+          orgName: rawOrg.org_name || rawOrg.name || "",
+          email: rawOrg.email || "",
+          telegramChatId: rawOrg.telegram_chat_id || "",
+          status: rawOrg.status || "active",
+        } : null;
+        return { ...u, theme: u.theme === "dark" ? "dark" : "light", sidebarCollapsed: !!u.sidebar_collapsed, organizationDetail };
+      }
 
       // Sahifa yangilanganda (F5) tizimdan chiqib ketmaslik uchun:
       // localStorage'da saqlangan access token bo'lsa, backend'dan profilni
@@ -6303,11 +6610,13 @@
                 setView(FIXED_ROLE ? "login" : "landing");
                 return;
               }
+              const user = normalizeSessionUser(res.data);
               setSession({
                 role: roleFromData,
-                user: res.data,
+                user,
                 orgId: roleFromData === "ceo" ? (res.data.organization?.id || null) : (res.data.organization || null),
               });
+              setTheme(user.theme);
               setView("app");
             }
           } catch (e) {
@@ -6315,14 +6624,6 @@
           }
         })();
       }, []);
-
-      // CEO/Support profile overrides (name/phone/address/avatar/password) layered
-      // on top of the fixed CEO_ACCOUNT / SUPPORT_ACCOUNT constants.
-      const [adminProfiles, setAdminProfiles] = useState({ ceo: {}, support: {} });
-      const getAdminAccount = (role) => ({
-        ...(role === "ceo" ? CEO_ACCOUNT : SUPPORT_ACCOUNT),
-        ...(adminProfiles[role] || {}),
-      });
 
       /* ============================================================
          MULTI-TENANT: har bir CEO = alohida "organization" yozuvi.
@@ -6353,12 +6654,22 @@
          Support hisobiga tegishli bo'lgani uchun orgId bilan cheklanmaydi. */
       const [supportTickets, setSupportTickets] = useState([]);
 
-      const [theme, setTheme] = useState(getInitialTheme);
+      /* Theme endi foydalanuvchi hisobiga (backend) bog'liq — bu state faqat
+         UI'ning joriy ko'rinishini kuzatib boradi; manba (source of truth)
+         session.user.theme, o'zgartirilganda ikkalasi ham yangilanadi (pastga
+         q.: actions.toggleTheme). */
+      const [theme, setTheme] = useState("light");
       useEffect(() => {
         document.documentElement.setAttribute("data-theme", theme);
-        try { localStorage.setItem(THEME_KEY, JSON.stringify(theme)); } catch (e) { }
       }, [theme]);
-      const toggleTheme = useCallback(() => setTheme((t) => (t === "dark" ? "light" : "dark")), []);
+      const toggleTheme = useCallback(() => {
+        setTheme((t) => {
+          const next = t === "dark" ? "light" : "dark";
+          setSession((s) => (s ? { ...s, user: { ...s.user, theme: next } } : s));
+          preferencesApi.update({ theme: next }).catch(() => { });
+          return next;
+        });
+      }, []);
 
       const toast = useCallback((type, message) => {
         const id = uid("toast");
@@ -6367,112 +6678,42 @@
       }, []);
       const removeToast = (id) => setToasts((t) => t.filter((x) => x.id !== id));
 
-      // Load & seed data on mount
+      /* Operatsion ma'lumotlar (guruhlar, o'quvchilar, mock examlar, topshiriqlar,
+         natijalar, xodimlar, murojaatlar) — barchasi backend'ga (Postgres)
+         saqlanadi va sessiya o'rnatilgach (login yoki F5'dan keyin profil
+         orqali tiklanganda) shu yerdan yuklanadi. Har bir so'rov backend
+         tomonida avtomatik ravishda joriy foydalanuvchining tashkiloti bilan
+         cheklanadi (get_queryset), shu sabab bu yerda alohida orgId filtri
+         shart emas — lekin pastdagi "scopedData" qo'shimcha himoya sifatida
+         baribir saqlab qolinadi. */
       useEffect(() => {
+        if (!session) { setReady(true); return; }
+        setReady(false);
         (async () => {
-          const seeded = await storeGet(K.seeded);
-          let groups, students, exams, assignments, results;
-          if (!seeded) {
-            const seed = buildSeed();
-            groups = seed.groups; students = seed.students; exams = seed.exams;
-            assignments = seed.assignments; results = seed.results;
-            await Promise.all([
-              storeSet(K.groups, groups),
-              storeSet(K.students, students),
-              storeSet(K.exams, exams),
-              storeSet(K.assignments, assignments),
-              storeSet(K.results, results),
-              storeSet(K.seeded, true),
-            ]);
-          } else {
-            [groups, students, exams, assignments, results] = await Promise.all([
-              storeGet(K.groups), storeGet(K.students), storeGet(K.exams), storeGet(K.assignments), storeGet(K.results),
-            ]);
-            groups = groups || []; students = students || []; exams = exams || [];
-            assignments = assignments || []; results = results || [];
-
-            // Migratsiya: eski formatdagi guruh ID lari (masalan uid() dan qolgan
-            // "grp_..." ko'rinishi) yangi 3-harf+4-raqam shabloniga o'tkaziladi,
-            // shu bilan birga barcha bog'liq havolalar (o'quvchi/imtihon/topshiriq) yangilanadi.
-            const idPattern = /^[A-Z]{3}-\d{4}$/;
-            if (groups.some((g) => !idPattern.test(g.id))) {
-              const idMap = {};
-              const migrated = [];
-              groups.forEach((g) => {
-                if (idPattern.test(g.id)) {
-                  migrated.push(g);
-                } else {
-                  const newId = genGroupId(migrated);
-                  idMap[g.id] = newId;
-                  migrated.push({ ...g, id: newId });
-                }
-              });
-              groups = migrated;
-              students = students.map((s) => (idMap[s.groupId] ? { ...s, groupId: idMap[s.groupId] } : s));
-              exams = exams.map((e) => ({
-                ...e,
-                assignedGroupIds: (e.assignedGroupIds || []).map((id) => idMap[id] || id),
-              }));
-              assignments = assignments.map((a) => {
-                const next = { ...a };
-                if (next.groupId && idMap[next.groupId]) next.groupId = idMap[next.groupId];
-                if (next.groupIds) next.groupIds = next.groupIds.map((id) => idMap[id] || id);
-                return next;
-              });
-            }
-          }
-
-          const savedAdminProfiles = (await storeGet(K.adminProfiles)) || { ceo: {}, support: {} };
-
-          /* ------------------------------------------------------------
-             MULTI-TENANT MIGRATION (bir martalik): agar hali birorta
-             "organization" (CEO) yozuvi yaratilmagan bo'lsa — demak bu fayl
-             eski (bitta-CEO'li) versiyadan yangilangan yoki birinchi marta
-             ochilyapti. Eski CEO_ACCOUNT (+ undagi profil o'zgarishlari)
-             asosida "Default o'quv markazi" tashkiloti yaratiladi va BARCHA
-             mavjud guruh/o'quvchi/mock/topshiriq/natija shu tashkilotga
-             (orgId) biriktiriladi. Hech qanday eski ma'lumot o'chirilmaydi
-             yoki qayta yozilmaydi — faqat "orgId" maydoni qo'shiladi.
-             ------------------------------------------------------------ */
-          let orgs = (await storeGet(K.organizations)) || [];
-          let staff = (await storeGet(K.orgStaff)) || [];
-          if (!orgs.length) {
-            // Demo/legacy "Default o'quv markazi" avtomatik yaratilmaydi.
-            // Tashkilotlar endi faqat Support paneli orqali ongli ravishda yaratiladi.
-          } else {
-            // Orgs allaqachon mavjud — baribir har ehtimolga qarshi orgId'siz
-            // qolib ketgan yozuvlarni birinchi tashkilotga biriktiramiz (masalan
-            // qo'lda import qilingan eski backup fayl bo'lsa).
-            const fallbackOrgId = orgs[0].id;
-            const tag = (arr) => arr.map((x) => (x.orgId ? x : { ...x, orgId: fallbackOrgId }));
-            groups = tag(groups); students = tag(students); exams = tag(exams);
-            assignments = tag(assignments); results = tag(results);
-          }
-
-          setData({ groups, students, exams, assignments, results });
-          setOrganizations(orgs);
-          setOrgStaff(staff);
-          setAdminProfiles(savedAdminProfiles);
           try {
-            const savedTickets = await ticketApi.list();
-            setSupportTickets(savedTickets);
+            const isSupport = session.role === "support";
+            const [groups, students, exams, assignments, results, staff, tickets] = await Promise.all([
+              groupApi.list().catch(() => []),
+              studentApi.list().catch(() => []),
+              examApi.list().catch(() => []),
+              assignmentApi.list().catch(() => []),
+              resultApi.list().catch(() => []),
+              staffApi.list().catch(() => []),
+              ticketApi.list().catch(() => []),
+            ]);
+            setData({ groups, students, exams, assignments, results });
+            setOrgStaff(staff);
+            setSupportTickets(tickets);
+            if (isSupport) {
+              try { setOrganizations(await orgApi.list()); } catch (e) { }
+            }
           } catch (e) {
-            console.error("Texnik xizmat murojaatlari yuklanmadi:", e);
+            toast("error", e.message || "Ma'lumotlar yuklanmadi");
+          } finally {
+            setReady(true);
           }
-          setReady(true);
         })();
-      }, []);
-
-      /* Saqlashda xatolik bo'lsa (masalan, localStorage hajmi to'lib qolgan bo'lsa),
-         buni jim yutib yubormaymiz — foydalanuvchiga aniq xabar beramiz, aks holda
-         "hozir saqlandi" ko'rinib, keyin qayta kirganda ma'lumot yo'qolib qoladi. */
-      const persistOrWarn = async (key, next, label) => {
-        const ok = await storeSet(key, next);
-        if (!ok) {
-          toast("error", `${label} SAQLANMADI! Brauzer xotirasi (localStorage) to'lib qolgan bo'lishi mumkin — odatda katta audio/rasm fayllar sababli. Eski/katta fayllarni o'chiring yoki kichraytiring va qaytadan urinib ko'ring.`);
-        }
-        return ok;
-      };
+      }, [session?.role, session?.orgId]); // eslint-disable-line
 
       /* ============================================================
          MULTI-TENANT ISOLATION (app-layer)
@@ -6492,19 +6733,32 @@
          ============================================================ */
       const sessionOrgId = session?.orgId || null;
       const isSupportSession = session?.role === "support";
+      // Backend get_queryset() allaqachon har bir so'rovni joriy foydalanuvchining
+      // tashkilotiga cheklaydi — bu shunchaki qo'shimcha UI-darajasidagi himoya
+      // (masalan formadan kelgan eski/keshdagi yozuvni tasodifan tahrirlamaslik uchun).
       const ownsRecord = (rec) => isSupportSession ? true : !!rec && !!sessionOrgId && rec.orgId === sessionOrgId;
-      const deny = (label) => { toast("error", `Ruxsat yo'q (403) — bu ${label} boshqa o'quv markaziga tegishli.`); return false; };
-      // "ceo" (?role=ceo) login havolasi organizations + orgStaff ikkalasidan ham
-      // qidiradi — shu sabab usernamelar shu ikki jadval bo'yicha global unikal
-      // bo'lishi shart (aks holda ikkita xil tashkilotdagi bir xil username
-      // login vaqtida bir-biriga aralashib ketishi mumkin).
-      const usernameTaken = (username, excludeId) =>
-        organizations.some((o) => o.username === username && o.id !== excludeId) ||
-        orgStaff.some((s) => s.username === username && s.id !== excludeId);
+      const deny = (label) => { toast("error", `Ruxsat yo'q — bu ${label} boshqa o'quv markaziga tegishli.`); return false; };
 
-      /* ---- data actions (optimistic + persisted) ---- */
+      /* Sessiyaning o'z profilini (nom/tashkilot ma'lumotlari) backend'dan
+         qayta yuklab, session.user'ni yangilaydi — masalan CEO o'z
+         tashkilotini yoki Support o'z profilini tahrirlaganidan keyin. */
+      const refreshSessionUser = async () => {
+        try {
+          const profileRes = await authApi.profile();
+          if (profileRes.success) {
+            setSession((s) => (s ? { ...s, user: normalizeSessionUser(profileRes.data) } : s));
+          }
+        } catch (e) { /* jim o'tkazamiz — sessiya baribir joriy holatda ishlayveradi */ }
+      };
+
+      /* ---- data actions (optimistic UI + backend orqali persist) ---- */
       const actions = {
-                addGroup: async (g) => {
+        setSidebarCollapsed: async (value) => {
+          setSession((s) => (s ? { ...s, user: { ...s.user, sidebarCollapsed: value } } : s));
+          try { await preferencesApi.update({ sidebar_collapsed: value }); } catch (e) { }
+        },
+
+        addGroup: async (g) => {
           if (!sessionOrgId) return deny("guruh");
           try {
             const created = await groupApi.create(g);
@@ -6539,167 +6793,263 @@
             return false;
           }
         },
+
         addStudent: async (s) => {
           if (!sessionOrgId) return deny("o'quvchi");
-          const next = [...data.students, { ...s, orgId: sessionOrgId }];
-          setData((d) => ({ ...d, students: next }));
-          return persistOrWarn(K.students, next, "O'quvchi");
+          try {
+            const created = await studentApi.create(s);
+            setData((d) => ({ ...d, students: [...d.students, created] }));
+            return true;
+          } catch (e) {
+            toast("error", e.message || "O'quvchi saqlanmadi");
+            return false;
+          }
         },
         updateStudent: async (id, patch) => {
           const existing = data.students.find((s) => s.id === id);
           if (!ownsRecord(existing)) return deny("o'quvchi");
-          const next = data.students.map((s) => (s.id === id ? { ...s, ...patch, orgId: s.orgId } : s));
-          setData((d) => ({ ...d, students: next }));
-          return persistOrWarn(K.students, next, "O'quvchi");
+          try {
+            const updated = await studentApi.update(id, patch);
+            setData((d) => ({ ...d, students: d.students.map((s) => (s.id === id ? updated : s)) }));
+            return true;
+          } catch (e) {
+            toast("error", e.message || "O'quvchi yangilanmadi");
+            return false;
+          }
         },
         deleteStudent: async (id) => {
           const existing = data.students.find((s) => s.id === id);
           if (!ownsRecord(existing)) return deny("o'quvchi");
-          const next = data.students.filter((s) => s.id !== id);
-          setData((d) => ({ ...d, students: next }));
-          return persistOrWarn(K.students, next, "O'quvchi o'chirish");
+          try {
+            await studentApi.remove(id);
+            setData((d) => ({ ...d, students: d.students.filter((s) => s.id !== id) }));
+            return true;
+          } catch (e) {
+            toast("error", e.message || "O'quvchi o'chirilmadi");
+            return false;
+          }
         },
+
         addExam: async (e) => {
           if (!sessionOrgId) return deny("mock exam");
-          const next = [...data.exams, { ...e, orgId: sessionOrgId }];
-          setData((d) => ({ ...d, exams: next }));
-          return persistOrWarn(K.exams, next, "Mock exam");
+          try {
+            const created = await examApi.create(e);
+            setData((d) => ({ ...d, exams: [...d.exams, created] }));
+            return true;
+          } catch (err) {
+            toast("error", err.message || "Mock exam saqlanmadi");
+            return false;
+          }
         },
         updateExam: async (id, patch) => {
           const existing = data.exams.find((e) => e.id === id);
           if (!ownsRecord(existing)) return deny("mock exam");
-          const next = data.exams.map((e) => (e.id === id ? { ...e, ...patch, orgId: e.orgId } : e));
-          setData((d) => ({ ...d, exams: next }));
-          return persistOrWarn(K.exams, next, "Mock exam");
+          try {
+            const updated = await examApi.update(id, patch);
+            setData((d) => ({ ...d, exams: d.exams.map((e) => (e.id === id ? updated : e)) }));
+            return true;
+          } catch (err) {
+            toast("error", err.message || "Mock exam yangilanmadi");
+            return false;
+          }
         },
         deleteExam: async (id) => {
           const existing = data.exams.find((e) => e.id === id);
           if (!ownsRecord(existing)) return deny("mock exam");
-          const next = data.exams.filter((e) => e.id !== id);
-          setData((d) => ({ ...d, exams: next }));
-          return persistOrWarn(K.exams, next, "Mock exam o'chirish");
+          try {
+            await examApi.remove(id);
+            setData((d) => ({ ...d, exams: d.exams.filter((e) => e.id !== id) }));
+            return true;
+          } catch (err) {
+            toast("error", err.message || "Mock exam o'chirilmadi");
+            return false;
+          }
         },
         toggleExam: async (id) => {
           const existing = data.exams.find((e) => e.id === id);
           if (!ownsRecord(existing)) return deny("mock exam");
-          const next = data.exams.map((e) => (e.id === id ? { ...e, status: e.status === "on" ? "off" : "on" } : e));
-          setData((d) => ({ ...d, exams: next }));
-          return persistOrWarn(K.exams, next, "Mock exam holati");
+          try {
+            await examApi.toggle(id);
+            setData((d) => ({ ...d, exams: d.exams.map((e) => (e.id === id ? { ...e, status: e.status === "on" ? "off" : "on" } : e)) }));
+            return true;
+          } catch (err) {
+            toast("error", err.message || "Mock exam holati o'zgarmadi");
+            return false;
+          }
         },
         reopenExam: async (id) => {
           const existing = data.exams.find((e) => e.id === id);
           if (!ownsRecord(existing)) return deny("mock exam");
-          const next = data.exams.map((e) => (e.id === id ? { ...e, status: "on", reopenedAt: Date.now(), notifSeenBy: [] } : e));
-          setData((d) => ({ ...d, exams: next }));
-          return persistOrWarn(K.exams, next, "Mock exam");
+          try {
+            await examApi.reopen(id);
+            setData((d) => ({ ...d, exams: d.exams.map((e) => (e.id === id ? { ...e, status: "on", reopenedAt: Date.now(), notifSeenBy: [] } : e)) }));
+            return true;
+          } catch (err) {
+            toast("error", err.message || "Mock exam qayta ochilmadi");
+            return false;
+          }
         },
         markExamNotifSeen: async (examId, studentId) => {
           const existing = data.exams.find((e) => e.id === examId);
-          if (!ownsRecord(existing)) return deny("mock exam");
-          const next = data.exams.map((e) => (e.id === examId && !(e.notifSeenBy || []).includes(studentId) ? { ...e, notifSeenBy: [...(e.notifSeenBy || []), studentId] } : e));
-          setData((d) => ({ ...d, exams: next }));
-          await storeSet(K.exams, next);
+          if (!ownsRecord(existing) || (existing.notifSeenBy || []).includes(studentId)) return;
+          try {
+            const nextSeenBy = [...(existing.notifSeenBy || []), studentId];
+            await examApi.markNotifSeen(examId, nextSeenBy);
+            setData((d) => ({ ...d, exams: d.exams.map((e) => (e.id === examId ? { ...e, notifSeenBy: nextSeenBy } : e)) }));
+          } catch (e) { /* bildirishnoma belgisi kritik emas — jim o'tkazamiz */ }
         },
         gradeWriting: async (resultId, payload) => {
           const existing = data.results.find((r) => r.id === resultId);
           if (!ownsRecord(existing)) return deny("natija");
-          const next = data.results.map((r) => {
-            if (r.id !== resultId) return r;
-            const others = r.sectionBands
-              ? Object.values(r.sectionBands).filter((v) => v != null)
-              : Object.values(r.sectionScores || {}).filter((v) => v != null).map(pctToBand);
-            const all = [...others, payload.band];
-            const overallBand = Math.round((all.reduce((a, b) => a + b, 0) / all.length) * 2) / 2;
-            return {
-              ...r,
-              writingStatus: "graded",
-              writingBand: payload.band,
-              task1Band: payload.task1Band,
-              task2Band: payload.task2Band,
-              task1Criteria: payload.task1Criteria,
-              task2Criteria: payload.task2Criteria,
-              overallBand,
+          try {
+            const body = {
+              task1_criteria: payload.task1Criteria, task2_criteria: payload.task2Criteria,
+              task1_band: payload.task1Band, task2_band: payload.task2Band, band: payload.band,
             };
-          });
-          setData((d) => ({ ...d, results: next }));
-          return persistOrWarn(K.results, next, "Baho");
+            const res = await resultApi.gradeWriting(resultId, body);
+            setData((d) => ({
+              ...d, results: d.results.map((r) => (r.id === resultId ? {
+                ...r, writingStatus: "graded", writingBand: res.writing_band,
+                task1Band: res.task1_band, task2Band: res.task2_band,
+                task1Criteria: payload.task1Criteria, task2Criteria: payload.task2Criteria,
+                overallBand: res.overall_band,
+              } : r)),
+            }));
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Baho saqlanmadi");
+            return false;
+          }
         },
+
         addAssignment: async (a) => {
           if (!sessionOrgId) return deny("vazifa");
-          const next = [...data.assignments, { ...a, orgId: sessionOrgId }];
-          setData((d) => ({ ...d, assignments: next }));
-          return persistOrWarn(K.assignments, next, "Vazifa");
+          try {
+            const created = await assignmentApi.create(a);
+            setData((d) => ({ ...d, assignments: [...d.assignments, created] }));
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Vazifa saqlanmadi");
+            return false;
+          }
         },
         updateAssignment: async (id, patch) => {
           const existing = data.assignments.find((a) => a.id === id);
           if (!ownsRecord(existing)) return deny("vazifa");
-          const next = data.assignments.map((a) => (a.id === id ? { ...a, ...patch, orgId: a.orgId } : a));
-          setData((d) => ({ ...d, assignments: next }));
-          return persistOrWarn(K.assignments, next, "Vazifa");
+          try {
+            const updated = await assignmentApi.update(id, patch);
+            setData((d) => ({ ...d, assignments: d.assignments.map((a) => (a.id === id ? updated : a)) }));
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Vazifa yangilanmadi");
+            return false;
+          }
         },
         deleteAssignment: async (id) => {
           const existing = data.assignments.find((a) => a.id === id);
           if (!ownsRecord(existing)) return deny("vazifa");
-          const next = data.assignments.filter((a) => a.id !== id);
-          setData((d) => ({ ...d, assignments: next }));
-          return persistOrWarn(K.assignments, next, "Vazifa o'chirish");
+          try {
+            await assignmentApi.remove(id);
+            setData((d) => ({ ...d, assignments: d.assignments.filter((a) => a.id !== id) }));
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Vazifa o'chirilmadi");
+            return false;
+          }
         },
         markAssignmentViewed: async (assignmentId, studentId) => {
           const existing = data.assignments.find((a) => a.id === assignmentId);
-          if (!ownsRecord(existing)) return deny("vazifa");
-          const next = data.assignments.map((a) => (a.id === assignmentId && !a.viewedBy.includes(studentId) ? { ...a, viewedBy: [...a.viewedBy, studentId] } : a));
-          setData((d) => ({ ...d, assignments: next }));
-          await storeSet(K.assignments, next);
+          if (!existing || existing.viewedBy.includes(studentId)) return;
+          try {
+            const nextViewedBy = [...existing.viewedBy, studentId];
+            await assignmentApi.markViewed(assignmentId, nextViewedBy);
+            setData((d) => ({ ...d, assignments: d.assignments.map((a) => (a.id === assignmentId ? { ...a, viewedBy: nextViewedBy } : a)) }));
+          } catch (e) { /* ko'rildi belgisi kritik emas */ }
         },
         addResult: async (r) => {
           if (!sessionOrgId) return deny("natija");
-          const next = [...data.results, { ...r, orgId: sessionOrgId }];
-          setData((d) => ({ ...d, results: next }));
-          return persistOrWarn(K.results, next, "Natija");
-        },
-        updateAdminProfile: async (role, patch) => {
-          const next = { ...adminProfiles, [role]: { ...(adminProfiles[role] || {}), ...patch } };
-          setAdminProfiles(next);
-          await persistOrWarn(K.adminProfiles, next, "Profil");
-        },
-        changeAdminPassword: async (role, newPassword) => {
-          await actions.updateAdminProfile(role, { password: newPassword });
-        },
-        disableAdminAccount: async (role) => {
-          await actions.updateAdminProfile(role, { disabled: true });
+          try {
+            const created = await resultApi.create(r);
+            setData((d) => ({ ...d, results: [...d.results, created] }));
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Natija saqlanmadi");
+            return false;
+          }
         },
 
-        /* ---- ORGANIZATIONS (CEO'lar) — faqat Support boshqaradi ----
+        /* ---- O'ZINING PAROLINI O'ZGARTIRISH — CEO/Admin/Manager/Teacher/
+           Support/O'quvchi barchasi uchun umumiy: joriy parol backend
+           tomonida (hash orqali) tekshiriladi, keyin yangisi saqlanadi. */
+        changeMyPassword: async (currentPassword, newPassword) => {
+          try {
+            const res = await authApi.changePassword(currentPassword, newPassword);
+            if (!res.success) { toast("error", res.message || "Joriy parol noto'g'ri"); return false; }
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Joriy parol noto'g'ri");
+            return false;
+          }
+        },
+
+        /* ---- SUPPORT — o'z profili (ism/telefon/telegram). Parol esa endi
+           yuqoridagi umumiy changeMyPassword orqali. CEO/Admin/Manager/
+           Teacher esa updateOrganization / updateOrgStaff orqali tahrirlaydi
+           (pastga q.) — bularning barchasi to'g'ridan-to'g'ri backend'dagi
+           foydalanuvchi/tashkilot yozuviga saqlanadi. */
+        updateAdminProfile: async (role, patch) => {
+          if (role !== "support" || session?.role !== "support") return deny("profil");
+          try {
+            const body = {};
+            if (patch.name !== undefined) body.name = patch.name;
+            if (patch.phone !== undefined) body.phone = patch.phone;
+            if (patch.telegramChatId !== undefined) body.telegram_chat_id = patch.telegramChatId;
+            if (patch.avatar !== undefined) body.avatar = patch.avatar;
+            const res = await authApi.updateProfile(body);
+            if (res.success) setSession((s) => (s ? { ...s, user: normalizeSessionUser(res.data) } : s));
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Profil saqlanmadi");
+            return false;
+          }
+        },
+
+        /* ---- ORGANIZATIONS (CEO'lar) ----
+           Ro'yxat/yaratish/o'chirish/holat — faqat Support. Lekin CEO/Admin
+           o'z tashkilotini (nom/telefon/telegram/parol) shu action orqali
+           tahrirlashi ham mumkin (backend get_queryset shu holatni
+           avtomatik cheklaydi — pastga q.: apps/accounts/org_views.py).
            Login namespace CEO va Xodim (Admin/Manager/Teacher) o'rtasida
            umumiy — shuning uchun username butun platforma bo'yicha unikal
-           bo'lishi shart, aks holda login vaqtida noto'g'ri hisobga kirib
-           ketish xavfi tug'iladi. */
+           bo'lishi shart (buni ham backend tekshiradi). */
         addOrganization: async (org) => {
           if (session?.role !== "support") return deny("tashkilot");
-          if (usernameTaken(org.username)) { toast("error", "Bu username allaqachon band (boshqa CEO/xodim tomonidan)"); return false; }
           try {
             const created = await orgApi.create(org);
             const withPw = { ...created, password: org.password }; // faqat shu sessiyada ko'rsatish uchun
-            setOrganizations([...organizations, withPw]);
+            setOrganizations((prev) => [...prev, withPw]);
             return withPw;
           } catch (e) {
-            toast("error", e.message || "Tashkilot yaratilmadi");
+            toast("error", e.message || "Tashkilot yaratilmadi (username band bo'lishi mumkin)");
             return false;
           }
         },
         updateOrganization: async (id, patch) => {
-          // CEO/Admin o'z tashkilotining ba'zi maydonlarini (nom/telefon/telegram
-          // va h.k.) tahrirlashi mumkin; Support esa istalgan tashkilotni.
           const allowed = session?.role === "support" || ((session?.role === "ceo" || session?.role === "admin") && sessionOrgId === id);
           if (!allowed) return deny("tashkilot");
-          if (patch.username && usernameTaken(patch.username, id)) { toast("error", "Bu username allaqachon band"); return false; }
           try {
             const updated = await orgApi.update(id, patch);
             const withPw = patch.password ? { ...updated, password: patch.password } : updated;
-            setOrganizations(organizations.map((o) => (o.id === id ? { ...o, ...withPw } : o)));
+            if (session.role === "support") {
+              setOrganizations((prev) => prev.map((o) => (o.id === id ? { ...o, ...withPw } : o)));
+            } else {
+              // CEO/Admin o'z tashkilotini tahrirladi — session.user (name/org
+              // ma'lumotlari) ham shunga mos yangilanishi kerak.
+              await refreshSessionUser();
+            }
             return withPw;
           } catch (e) {
-            toast("error", e.message || "Tashkilot yangilanmadi");
+            toast("error", e.message || "Tashkilot yangilanmadi (username band bo'lishi mumkin)");
             return false;
           }
         },
@@ -6707,7 +7057,7 @@
           if (session?.role !== "support") return deny("tashkilot");
           try {
             await orgApi.setStatus(id, status);
-            setOrganizations(organizations.map((o) => (o.id === id ? { ...o, status } : o)));
+            setOrganizations((prev) => prev.map((o) => (o.id === id ? { ...o, status } : o)));
           } catch (e) {
             toast("error", e.message || "Tashkilot holati o'zgarmadi");
             return false;
@@ -6717,7 +7067,7 @@
           if (session?.role !== "support") return deny("tashkilot");
           try {
             await orgApi.remove(id);
-            setOrganizations(organizations.filter((o) => o.id !== id));
+            setOrganizations((prev) => prev.filter((o) => o.id !== id));
             return true;
           } catch (e) {
             toast("error", e.message || "Tashkilot o'chirilmadi (avval uning xodimlari/guruhlarini tekshiring)");
@@ -6726,80 +7076,86 @@
         },
 
         /* ---- ORG STAFF (Admin/Manager/Teacher) — CEO va Admin (o'z tashkilotiga),
-           Support esa istalgan tashkilotga (s.orgId orqali) xodim qo'sha oladi ---- */
+           Support esa istalgan tashkilotga xodim qo'sha oladi ---- */
         addOrgStaff: async (s) => {
           const targetOrgId = isSupportSession ? s.orgId : sessionOrgId;
           if (!canManageStaff(session?.role) || !targetOrgId) return deny("xodim");
-          if (usernameTaken(s.username)) { toast("error", "Bu username allaqachon band"); return false; }
-          const next = [...orgStaff, { ...s, orgId: targetOrgId }];
-          setOrgStaff(next);
-          return persistOrWarn(K.orgStaff, next, "Xodim");
+          try {
+            const created = await staffApi.create(s);
+            setOrgStaff((prev) => [...prev, created]);
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Xodim saqlanmadi (username band bo'lishi mumkin)");
+            return false;
+          }
         },
         updateOrgStaff: async (id, patch) => {
           const existing = orgStaff.find((s) => s.id === id);
           // Xodimning o'zi ham profilini (ism/telefon/parol) tahrirlay oladi.
           const isSelf = session?.user?.id === id;
           if (!ownsRecord(existing) || (!isSelf && !canManageStaff(session?.role))) return deny("xodim");
-          if (patch.username && usernameTaken(patch.username, id)) { toast("error", "Bu username allaqachon band"); return false; }
-          const next = orgStaff.map((s) => (s.id === id ? { ...s, ...patch, orgId: s.orgId } : s));
-          setOrgStaff(next);
-          return persistOrWarn(K.orgStaff, next, "Xodim");
+          try {
+            const updated = await staffApi.update(id, patch);
+            setOrgStaff((prev) => prev.map((s) => (s.id === id ? updated : s)));
+            if (isSelf) await refreshSessionUser();
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Xodim yangilanmadi (username band bo'lishi mumkin)");
+            return false;
+          }
         },
         deleteOrgStaff: async (id) => {
           const existing = orgStaff.find((s) => s.id === id);
           if (!canManageStaff(session?.role) || !ownsRecord(existing)) return deny("xodim");
-          const next = orgStaff.filter((s) => s.id !== id);
-          setOrgStaff(next);
-          return persistOrWarn(K.orgStaff, next, "Xodim o'chirish");
+          try {
+            await staffApi.remove(id);
+            setOrgStaff((prev) => prev.filter((s) => s.id !== id));
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Xodim o'chirilmadi");
+            return false;
+          }
         },
 
         /* ---- "TEXNIK XIZMAT" (support tickets) ----
            Support'dan tashqari istalgan sessiyadagi foydalanuvchi (CEO/Admin/
            Manager/Teacher/O'quvchi) footerdagi "Texnik xizmat" tugmasi orqali
-           muammo yuboradi. Xabar: (1) localStorage'da saqlanadi va Support CRM
-           panelida ko'rinadi, (2) Support profilida kiritilgan Telegram Chat
-           ID'ga bot orqali yuboriladi (agar kiritilgan bo'lsa). */
-          submitSupportTicket: async (message) => {
-            if (!session || session.role === "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return false; }
-            const text = (message || "").trim();
-            if (!text) { toast("error", "Muammo tavsifini kiriting"); return false; }
-            try {
-              const ticket = await ticketApi.create(text);
-              setSupportTickets((prev) => [ticket, ...prev]);
-              const supportChatId = (adminProfiles.support || {}).telegramChatId;
-              if (supportChatId) sendSupportTicketToTelegram(supportChatId, ticket);
-              return true;
-            } catch (e) {
-              toast("error", e.message || "Murojaat yuborilmadi");
-              return false;
-            }
-          },
-          markSupportTicketSeen: async (id) => {
-            if (session?.role !== "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return; }
-            try {
-              await ticketApi.markSeen(id);
-              setSupportTickets((prev) => prev.map((t) => (t.id === id ? { ...t, seen: true } : t)));
-            } catch (e) {
-              toast("error", e.message || "Belgilanmadi");
-            }
-          },
-          markAllSupportTicketsSeen: async () => {
-            if (session?.role !== "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return; }
-            const unseen = supportTickets.filter((t) => !t.seen);
-            try {
-              await Promise.all(unseen.map((t) => ticketApi.markSeen(t.id)));
-              setSupportTickets((prev) => prev.map((t) => ({ ...t, seen: true })));
-            } catch (e) {
-              toast("error", e.message || "Belgilanmadi");
-            }
-          },
-          markAllSupportTicketsSeen: async () => {
-            if (session?.role !== "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return; }
-            const next = supportTickets.map((t) => ({ ...t, seen: true }));
-            setSupportTickets(next);
-            await storeSet(K.supportTickets, next);
-          },
-        };
+           muammo yuboradi. Xabar: (1) backend'ga (Postgres) saqlanadi va
+           Support CRM panelida ko'rinadi, (2) Support profilida kiritilgan
+           Telegram Chat ID'ga bot orqali yuboriladi (agar kiritilgan bo'lsa). */
+        submitSupportTicket: async (message) => {
+          if (!session || session.role === "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return false; }
+          const text = (message || "").trim();
+          if (!text) { toast("error", "Muammo tavsifini kiriting"); return false; }
+          try {
+            const ticket = await ticketApi.create(text);
+            setSupportTickets((prev) => [ticket, ...prev]);
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Murojaat yuborilmadi");
+            return false;
+          }
+        },
+        markSupportTicketSeen: async (id) => {
+          if (session?.role !== "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return; }
+          try {
+            await ticketApi.markSeen(id);
+            setSupportTickets((prev) => prev.map((t) => (t.id === id ? { ...t, seen: true } : t)));
+          } catch (e) {
+            toast("error", e.message || "Belgilanmadi");
+          }
+        },
+        markAllSupportTicketsSeen: async () => {
+          if (session?.role !== "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return; }
+          const unseen = supportTickets.filter((t) => !t.seen);
+          try {
+            await Promise.all(unseen.map((t) => ticketApi.markSeen(t.id)));
+            setSupportTickets((prev) => prev.map((t) => ({ ...t, seen: true })));
+          } catch (e) {
+            toast("error", e.message || "Belgilanmadi");
+          }
+        },
+      };
 
       /* ---- auth ----
          MULTI-TENANT LOGIN: "ceo" havolasi endi CEO + Admin + Manager + Teacher
@@ -6816,7 +7172,20 @@
         try {
           const res = await authApi.login(username, password, loginRole);
           if (res.success) {
-            setSession({ role: res.data.role, user: res.data.user, orgId: res.data.org_id });
+            /* Login javobi qisqartirilgan (theme/tashkilot tafsilotlari yo'q) —
+               shu sabab darhol to'liq profilni so'rab, session.user'ni bir xil
+               shaklga keltiramiz (session-restore effekti bilan bir xil). */
+            let user = normalizeSessionUser(res.data.user);
+            let orgId = res.data.org_id;
+            try {
+              const profileRes = await authApi.profile();
+              if (profileRes.success) {
+                user = normalizeSessionUser(profileRes.data);
+                orgId = res.data.role === "ceo" ? (profileRes.data.organization?.id || null) : (profileRes.data.organization || null);
+              }
+            } catch (e) { /* login o'zi muvaffaqiyatli — profil tafsilotlari keyinroq ham yuklanadi */ }
+            setSession({ role: res.data.role, user, orgId });
+            setTheme(user.theme);
             setView("app");
           } else {
             setLoginError(res.message || "Login yoki parol noto'g'ri");
@@ -6891,7 +7260,7 @@
               />
             )}
             {view === "app" && session?.role === "support" && (
-              <SupportApp session={session} organizations={organizations} orgStaff={orgStaff} actions={actions} onLogout={handleLogout} toast={toast} adminProfiles={adminProfiles} supportTickets={supportTickets} />
+              <SupportApp session={session} organizations={organizations} orgStaff={orgStaff} actions={actions} onLogout={handleLogout} toast={toast} supportTickets={supportTickets} />
             )}
             {view === "app" && session && !["support", "student"].includes(session.role) && (
               <AdminApp
@@ -6900,7 +7269,6 @@
                 actions={actions}
                 onLogout={handleLogout}
                 toast={toast}
-                adminProfiles={adminProfiles}
                 organizations={organizations}
                 orgStaff={orgStaffScoped}
               />
