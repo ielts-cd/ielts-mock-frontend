@@ -2383,7 +2383,7 @@
       );
     }
 
-    function TopBar({ title, notifCount, notifications, onNotifClick, name, avatar, onGoProfile, onLogout }) {
+    function TopBar({ title, notifCount, notifications, onNotifClick, name, avatar, onGoProfile, onLogout, extra }) {
       const [open, setOpen] = useState(false);
       const ref = useRef(null);
 
@@ -2405,6 +2405,7 @@
             <h1 className="f-display text-[18px] md:text-[21px] font-semibold truncate" style={{ color: C.ink }}>{title}</h1>
           </div>
           <div className="flex items-center gap-2.5 md:gap-3 shrink-0">
+            {extra}
             <div className="hidden md:block"><ThemeToggle size="sm" /></div>
             <div className="relative" ref={ref}>
               <button
@@ -6366,7 +6367,6 @@
       const [staffOrg, setStaffOrg] = useState(null); // org whose staff modal is open
       const [confirmDelete, setConfirmDelete] = useState(null); // org pending delete confirmation
       const [deleting, setDeleting] = useState(false);
-      const [messageOrg, setMessageOrg] = useState(null); // org whose "Xabar yuborish" modal is open
 
       const existingUsernames = organizations.map((o) => ({ value: o.username, id: o.id }));
       const filtered = organizations.filter((o) => o.orgName.toLowerCase().includes(search.toLowerCase()) || o.ceoName.toLowerCase().includes(search.toLowerCase()));
@@ -6409,27 +6409,28 @@
                     <div className="f-display font-semibold text-[16px] truncate" style={{ color: C.ink }}>{o.orgName}</div>
                     <div className="text-[12.5px] truncate" style={{ color: C.mutedSoft }}>CEO: {o.ceoName}</div>
                   </button>
-                  <Badge tone={o.status === "active" ? "success" : "danger"}>{o.status === "active" ? "Faol" : "Faol emas"}</Badge>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Badge tone={o.status === "active" ? "success" : "danger"}>{o.status === "active" ? "Faol" : "Faol emas"}</Badge>
+                    <ActionMenu items={[
+                      {
+                        icon: "user-tie",
+                        label: `Xodimlar${orgStaff.filter((s) => s.orgId === o.id).length ? ` (${orgStaff.filter((s) => s.orgId === o.id).length})` : ""}`,
+                        onClick: () => setStaffOrg(o),
+                      },
+                      { icon: "pen", label: "Tahrirlash", onClick: () => setShowForm(o) },
+                      { icon: "eye", label: "Login", onClick: () => setViewPwFor(o) },
+                      o.status === "active"
+                        ? { icon: "ban", label: "Bloklash", onClick: async () => { await actions.setOrganizationStatus(o.id, "inactive"); toast("success", "Tashkilot bloklandi"); } }
+                        : { icon: "circle-check", label: "Faollashtirish", onClick: async () => { await actions.setOrganizationStatus(o.id, "active"); toast("success", "Tashkilot faollashtirildi"); } },
+                      { icon: "trash", label: "O'chirish", onClick: () => setConfirmDelete(o), danger: true },
+                    ]} />
+                  </div>
                 </div>
-                <div className="space-y-1.5 text-[13px] mb-4" style={{ color: C.muted }}>
+                <div className="space-y-1.5 text-[13px]" style={{ color: C.muted }}>
                   <div className="flex items-center gap-2"><Icon name="at" size={12} /> {o.username}</div>
                   {o.phone && <div className="flex items-center gap-2"><Icon name="phone" size={12} /> {o.phone}</div>}
                   {o.email && <div className="flex items-center gap-2"><Icon name="envelope" size={12} /> {o.email}</div>}
                   {o.telegramChatId && <div className="flex items-center gap-2"><Icon name="paper-plane" size={12} /> {o.telegramChatId}</div>}
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Button size="sm" variant="teal" icon="user-tie" onClick={() => setStaffOrg(o)}>
-                    Xodimlar{orgStaff.filter((s) => s.orgId === o.id).length ? ` (${orgStaff.filter((s) => s.orgId === o.id).length})` : ""}
-                  </Button>
-                  <Button size="sm" variant="gold" icon="paper-plane" onClick={() => setMessageOrg(o)}>Xabar yuborish</Button>
-                  <Button size="sm" variant="ghost" icon="pen" onClick={() => setShowForm(o)}>Tahrirlash</Button>
-                  <Button size="sm" variant="ghost" icon="eye" onClick={() => setViewPwFor(o)}>Login</Button>
-                  {o.status === "active" ? (
-                    <Button size="sm" variant="danger" icon="ban" onClick={async () => { await actions.setOrganizationStatus(o.id, "inactive"); toast("success", "Tashkilot bloklandi"); }}>Bloklash</Button>
-                  ) : (
-                    <Button size="sm" variant="teal" icon="circle-check" onClick={async () => { await actions.setOrganizationStatus(o.id, "active"); toast("success", "Tashkilot faollashtirildi"); }}>Faollashtirish</Button>
-                  )}
-                  <Button size="sm" variant="danger" icon="trash" onClick={() => setConfirmDelete(o)}>O'chirish</Button>
                 </div>
               </Card>
             ))}
@@ -6471,18 +6472,6 @@
               actions={actions}
               toast={toast}
               onClose={() => setStaffOrg(null)}
-            />
-          )}
-
-          {messageOrg && (
-            <SupportMessageModal
-              org={messageOrg}
-              organizations={organizations}
-              onClose={() => setMessageOrg(null)}
-              onSubmit={({ mode, orgId, message }) => (
-                mode === "all" ? actions.sendMessageToAllCeos(message) : actions.sendMessageToCeo(message, orgId)
-              )}
-              toast={toast}
             />
           )}
 
@@ -6734,6 +6723,13 @@
       };
       const collapsed = collapsedState;
 
+      /* "Xabar yuborish" — endi Tashkilotlar kartasidagi har bir org uchun
+         emas, umumiy Header'da (TopBar) bitta tugma. Ochilganda org oldindan
+         tanlanmagan bo'ladi — modal ichida "bitta CEO" yoki "barcha
+         CEO'larga" tanlanadi (SupportMessageModal buni allaqachon qo'llab-
+         quvvatlaydi: org=null bo'lsa birinchi tashkilot standart tanlanadi). */
+      const [showMessageCompose, setShowMessageCompose] = useState(false);
+
       const tickets = supportTickets || [];
       const unseenTickets = tickets.filter((t) => !t.seen);
 
@@ -6796,6 +6792,11 @@
               avatar={effectiveUser.avatar}
               onGoProfile={() => setTab("profile")}
               onLogout={onLogout}
+              extra={
+                <Button size="sm" variant="gold" icon="paper-plane" onClick={() => setShowMessageCompose(true)}>
+                  Xabar yuborish
+                </Button>
+              }
             />
             <div className="p-5 md:p-8 pb-24 md:pb-8 max-w-6xl mx-auto">
               {tab === "organizations" && <SupportOrganizations organizations={organizations} orgStaff={orgStaff} actions={actions} toast={toast} />}
@@ -6845,6 +6846,17 @@
             </div>
           </div>
           <BottomNav tabs={tabs} active={tab} onChange={setTab} notifTabKey="tickets" notifCount={unseenTickets.length} />
+          {showMessageCompose && (
+            <SupportMessageModal
+              org={null}
+              organizations={organizations}
+              onClose={() => setShowMessageCompose(false)}
+              onSubmit={({ mode, orgId, message }) => (
+                mode === "all" ? actions.sendMessageToAllCeos(message) : actions.sendMessageToCeo(message, orgId)
+              )}
+              toast={toast}
+            />
+          )}
         </div>
       );
     }
