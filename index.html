@@ -571,6 +571,70 @@
     };
 
     /* ============================================================
+       MESSAGES API — Support <-> CEO va CEO -> Employee/Student ichki
+       xabar tizimi. Backend har bir qabul qiluvchi uchun alohida yozuv
+       yaratadi (fan-out), shu sabab "send*" funksiyalari har doim
+       yaratilgan yozuvlar RO'YXATINI qaytaradi (bitta emas).
+       ============================================================ */
+    function messageFromApi(m) {
+      return {
+        id: m.id,
+        senderRole: m.sender_role,
+        senderId: m.sender_id,
+        senderName: m.sender_name,
+        recipientRole: m.recipient_role,
+        recipientId: m.recipient_id,
+        recipientName: m.recipient_name,
+        orgId: m.organization,
+        message: m.message,
+        status: m.status,
+        createdAt: m.created_at,
+        respondedAt: m.responded_at,
+      };
+    }
+    const messageApi = {
+      list: async () => {
+        const json = await apiFetch("/api/messages/");
+        const results = Array.isArray(json) ? json : (json.results || []);
+        return results.map(messageFromApi);
+      },
+      /* Joriy foydalanuvchiga tegishli, hali javob berilmagan xabar (yoki null) —
+         Dashboard ochilishida avtomatik modal ko'rsatish uchun. */
+      unread: async () => {
+        const json = await apiFetch("/api/messages/unread/");
+        return json.data ? messageFromApi(json.data) : null;
+      },
+      /* Support -> barcha CEO'larga */
+      sendToAllCeos: async (message) => {
+        const json = await apiFetch("/api/messages/send/", {
+          method: "POST", body: JSON.stringify({ message, target: "all" }),
+        });
+        return (json.data || []).map(messageFromApi);
+      },
+      /* Support -> aynan bitta CEO */
+      sendToCeo: async (message, orgId) => {
+        const json = await apiFetch("/api/messages/send/", {
+          method: "POST", body: JSON.stringify({ message, target: "single", recipient_id: orgId }),
+        });
+        return (json.data || []).map(messageFromApi);
+      },
+      /* CEO -> o'z tashkilotidagi bitta yoki bir nechta Employee/Student */
+      sendToUsers: async (message, recipientIds) => {
+        const json = await apiFetch("/api/messages/send/", {
+          method: "POST", body: JSON.stringify({ message, recipient_ids: recipientIds }),
+        });
+        return (json.data || []).map(messageFromApi);
+      },
+      /* Qabul qiluvchi tomonidan: "read" | "ignored" */
+      respond: async (id, status) => {
+        const json = await apiFetch(`/api/messages/${id}/respond/`, {
+          method: "POST", body: JSON.stringify({ status }),
+        });
+        return messageFromApi(json.data);
+      },
+    };
+
+    /* ============================================================
        STUDENTS API — o'quvchilar endi backendga (Postgres) saqlanadi.
        ESLATMA: backend parolni har doim hash'lab saqlaydi (write-only) —
        shuning uchun ro'yxatdan qaytgan yozuvda "password" maydoni
@@ -579,6 +643,7 @@
        ko'rish" uchun esa yangi parol generatsiya qilish kerak bo'ladi
        (pastga q.: updateStudent({ password })).
        ============================================================ */
+
     function studentFromApi(s) {
       return {
         id: s.id,
@@ -1549,6 +1614,59 @@
             </div>
           </div>
         </Modal>
+      );
+    }
+
+    /* ============================================================
+       IChKI XABAR TIZIMI — umumiy komponentlar
+       ============================================================ */
+    function MessageStatusBadge({ status }) {
+      const map = {
+        sent: { tone: "muted", label: "Yuborilgan" },
+        read: { tone: "success", label: "O'qilgan" },
+        ignored: { tone: "danger", label: "E'tiborsiz qoldirilgan" },
+      };
+      const m = map[status] || map.sent;
+      return <Badge tone={m.tone}>{m.label}</Badge>;
+    }
+
+    /* CEO/Employee/Student dashboard ochilganda, hali javob berilmagan xabar
+       bo'lsa avtomatik ko'rsatiladigan modal.
+       MUHIM: bu Modal komponentidan farqli — X tugmasi YO'Q va orqa fonga
+       bosish orqali ham yopilmaydi (backdrop'da onClick yo'q). Foydalanuvchi
+       "O'qilgan" yoki "E'tiborsiz qoldirish" tugmalaridan birini bosmaguncha
+       modal ochiq turadi. */
+    function UnreadMessageModal({ msg, onRead, onIgnore }) {
+      const [sending, setSending] = useState(false);
+      const act = async (status) => {
+        if (sending) return;
+        setSending(true);
+        if (status === "read") await onRead(msg.id); else await onIgnore(msg.id);
+        setSending(false);
+      };
+      return (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-2.5 sm:p-4" style={{ backgroundColor: C.overlay }}>
+          <div className="w-full rounded-2xl shadow-2xl flex flex-col" style={{ backgroundColor: C.card, maxWidth: "min(480px, 96vw)", maxHeight: "min(90vh, 700px)" }}>
+            <div className="px-5 sm:px-6 py-4 sm:py-5 shrink-0" style={{ borderBottom: `1px solid ${C.borderSoft}` }}>
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: C.gold }}>
+                  <Icon name="envelope" size={16} color={C.inkDeep} />
+                </div>
+                <div className="min-w-0">
+                  <div className="f-display font-semibold text-[16px]" style={{ color: C.ink }}>Yangi xabar</div>
+                  <div className="text-[12.5px] truncate" style={{ color: C.mutedSoft }}>{msg.senderName}dan</div>
+                </div>
+              </div>
+            </div>
+            <div className="p-5 sm:p-6 overflow-y-auto min-h-0">
+              <div className="text-[14px] f-body leading-relaxed whitespace-pre-wrap" style={{ color: C.text }}>{msg.message}</div>
+            </div>
+            <div className="px-5 sm:px-6 pb-5 sm:pb-6 flex gap-2 justify-end shrink-0">
+              <Button variant="ghost" onClick={() => act("ignored")} disabled={sending} icon="eye-slash">E'tiborsiz qoldirish</Button>
+              <Button variant="teal" onClick={() => act("read")} disabled={sending} icon="check">O'qilgan</Button>
+            </div>
+          </div>
+        </div>
       );
     }
 
@@ -4232,7 +4350,7 @@
       );
     }
 
-    function AdminApp({ session, data, actions, onLogout, toast, organizations, orgStaff }) {
+    function AdminApp({ session, data, actions, onLogout, toast, organizations, orgStaff, messages, unreadMsg }) {
       const [tab, setTab] = useState("overview");
       const [collapsedState, setCollapsedState] = useState(!!session.user?.sidebarCollapsed);
       const setCollapsed = (next) => {
@@ -4274,9 +4392,12 @@
         { key: "exams", label: "Mock Examlar", icon: "book-open" },
         { key: "assignments", label: "Vazifalar", icon: "clipboard-list" },
         ...(canStaff ? [{ key: "staff", label: "Xodimlar", icon: "user-tie" }] : []),
+        // Faqat CEO xodim/o'quvchilarga xabar yubora oladi (Admin/Manager/
+        // Teacher — yo'q), shu sabab bu tab faqat session.role === "ceo"da.
+        ...(session.role === "ceo" ? [{ key: "messages", label: "Xabarlar", icon: "envelope" }] : []),
         { key: "profile", label: "Profil", icon: "user" },
       ];
-      const titles = { overview: "Umumiy ko'rinish", groups: "Guruhlar", students: "O'quvchilar", exams: "Mock Examlar", assignments: "Vazifalar", staff: "Xodimlar", profile: "Profil" };
+      const titles = { overview: "Umumiy ko'rinish", groups: "Guruhlar", students: "O'quvchilar", exams: "Mock Examlar", assignments: "Vazifalar", staff: "Xodimlar", messages: "Xabarlar", profile: "Profil" };
 
       // CEO uchun profil ma'lumotlari to'g'ridan-to'g'ri session.user'da (backend
       // ProfileView ceo tarmog'idan keladi: name/username/phone/email/avatar).
@@ -4326,6 +4447,9 @@
               {tab === "staff" && canStaff && (
                 <AdminStaff orgStaff={orgStaff} actions={actions} toast={toast} session={session} />
               )}
+              {tab === "messages" && session.role === "ceo" && (
+                <CeoMessages orgStaff={orgStaff} students={data.students} messages={messages} actions={actions} toast={toast} />
+              )}
               {tab === "profile" && (
                 <AdminProfile
                   session={session}
@@ -4346,6 +4470,131 @@
               onClose={() => setShowSupport(false)}
               onSubmit={submitSupportTicket}
               loading={supportSending}
+            />
+          )}
+          {/* CEO uchun — Support'dan; Admin/Manager/Teacher uchun — CEO'dan
+              kelgan hali javob berilmagan xabar bo'lsa, Dashboard ochilishi
+              bilan avtomatik ko'rsatiladi (X yo'q, tugma bosilmaguncha yopilmaydi). */}
+          {unreadMsg && (
+            <UnreadMessageModal
+              msg={unreadMsg}
+              onRead={(id) => actions.respondToMessage(id, "read")}
+              onIgnore={(id) => actions.respondToMessage(id, "ignored")}
+            />
+          )}
+        </div>
+      );
+    }
+
+    /* ============================================================
+       CEO -> EMPLOYEE / STUDENT — ichki xabar tizimi.
+       Faqat CEO (Admin/Manager/Teacher emas) o'z tashkilotidagi
+       xodim/o'quvchilarga xabar yubora oladi va ularning statusini ko'radi.
+       ============================================================ */
+    function CeoMessageComposeModal({ orgStaff, students, onClose, onSubmit, toast }) {
+      const [selected, setSelected] = useState([]);
+      const [message, setMessage] = useState("");
+      const [sending, setSending] = useState(false);
+      const toggle = (id) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+      const trimmed = message.trim();
+      const canSubmit = trimmed.length >= 2 && selected.length > 0 && !sending;
+
+      const submit = async () => {
+        if (!canSubmit) return;
+        setSending(true);
+        const ok = await onSubmit({ recipientIds: selected, message: trimmed });
+        setSending(false);
+        if (ok !== false) { onClose(); toast("success", "Xabar yuborildi"); }
+      };
+
+      return (
+        <Modal title="Xodim / O'quvchiga xabar yuborish" onClose={onClose} width="560px">
+          <div className="space-y-4">
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="text-[13px] font-semibold" style={{ color: C.text }}>Qabul qiluvchilar</div>
+                {!!selected.length && (
+                  <button type="button" onClick={() => setSelected([])} className="text-[12px] font-semibold hover:opacity-70 transition-opacity" style={{ color: C.mutedSoft }}>Tozalash</button>
+                )}
+              </div>
+              <div className="rounded-lg p-3 max-h-56 overflow-y-auto space-y-3" style={{ backgroundColor: C.paperDim }}>
+                {!!orgStaff.length && (
+                  <div>
+                    <div className="text-[11.5px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: C.mutedSoft }}>Xodimlar</div>
+                    <div className="space-y-1.5">
+                      {orgStaff.map((s) => (
+                        <label key={s.id} className="flex items-center gap-2 text-[13px]" style={{ color: C.text }}>
+                          <input type="checkbox" checked={selected.includes(s.id)} onChange={() => toggle(s.id)} />
+                          {s.name} <span style={{ color: C.mutedSoft }}>({ROLE_LABELS[s.role] || s.role})</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {!!students.length && (
+                  <div>
+                    <div className="text-[11.5px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: C.mutedSoft }}>O'quvchilar</div>
+                    <div className="space-y-1.5">
+                      {students.map((s) => (
+                        <label key={s.id} className="flex items-center gap-2 text-[13px]" style={{ color: C.text }}>
+                          <input type="checkbox" checked={selected.includes(s.id)} onChange={() => toggle(s.id)} />
+                          {s.name}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {!orgStaff.length && !students.length && (
+                  <div className="text-[12px]" style={{ color: C.mutedSoft }}>Hozircha xodim yoki o'quvchi yo'q</div>
+                )}
+              </div>
+            </div>
+            <TextArea label="Xabar matni" value={message} onChange={setMessage} rows={6} placeholder="Xabaringizni shu yerga yozing..." />
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={onClose} disabled={sending}>Bekor qilish</Button>
+              <Button variant="teal" icon="paper-plane" onClick={submit} disabled={!canSubmit} loading={sending}>Yuborish</Button>
+            </div>
+          </div>
+        </Modal>
+      );
+    }
+
+    function CeoMessages({ orgStaff, students, messages, actions, toast }) {
+      const [showCompose, setShowCompose] = useState(false);
+      const sent = (messages || []).filter((m) => m.senderRole === "ceo").slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+      const submit = ({ recipientIds, message }) => actions.sendMessageToUsers(message, recipientIds);
+
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[13px]" style={{ color: C.mutedSoft }}>Xodim va o'quvchilaringizga xabar yuboring</div>
+            <Button icon="paper-plane" onClick={() => setShowCompose(true)}>Xabar yuborish</Button>
+          </div>
+          <div className="space-y-2.5">
+            {sent.map((m) => (
+              <Card key={m.id}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[13.5px] font-semibold truncate" style={{ color: C.ink }}>
+                      {m.recipientName} <span className="font-normal" style={{ color: C.mutedSoft }}>({ROLE_LABELS[m.recipientRole] || m.recipientRole})</span>
+                    </div>
+                    <div className="text-[13px] mt-1 whitespace-pre-wrap" style={{ color: C.muted }}>{m.message}</div>
+                    <div className="text-[11.5px] mt-1.5" style={{ color: C.mutedSoft }}>{fmtDateTime(m.createdAt)}</div>
+                  </div>
+                  <MessageStatusBadge status={m.status} />
+                </div>
+              </Card>
+            ))}
+            {!sent.length && <EmptyState icon="envelope" title="Xabarlar yo'q" sub="Xodim yoki o'quvchiga xabar yuborish uchun yuqoridagi tugmani bosing" />}
+          </div>
+          {showCompose && (
+            <CeoMessageComposeModal
+              orgStaff={orgStaff}
+              students={students}
+              onClose={() => setShowCompose(false)}
+              onSubmit={submit}
+              toast={toast}
             />
           )}
         </div>
@@ -5778,7 +6027,7 @@
       );
     }
 
-    function StudentApp({ session, data, actions, onLogout, toast, organizations }) {
+    function StudentApp({ session, data, actions, onLogout, toast, organizations, unreadMsg }) {
       /* "organizations" ro'yxati endi faqat Support uchun to'liq keladi — bu
          yerda (o'quvchi ilovasida) o'z tashkiloti haqidagi ma'lumot esa
          to'g'ridan-to'g'ri profildan (session.user.organizationDetail). */
@@ -5938,6 +6187,15 @@
               loading={supportSending}
             />
           )}
+          {/* CEO'dan kelgan hali javob berilmagan xabar bo'lsa, Dashboard
+              ochilishi bilan avtomatik ko'rsatiladi. */}
+          {unreadMsg && (
+            <UnreadMessageModal
+              msg={unreadMsg}
+              onRead={(id) => actions.respondToMessage(id, "read")}
+              onIgnore={(id) => actions.respondToMessage(id, "ignored")}
+            />
+          )}
         </div>
       );
     }
@@ -6017,6 +6275,90 @@
       );
     }
 
+    /* Support -> CEO: "Xabar yuborish" modali. Har bir tashkilot kartasidagi
+       tugma orqali ochiladi (shu org "single" rejimda oldindan tanlangan
+       holda), lekin ichida "Barcha CEO'larga" ham yuborish mumkin. */
+    function SupportMessageModal({ org, organizations, onClose, onSubmit, toast }) {
+      const [mode, setMode] = useState("single"); // 'single' | 'all'
+      const [targetOrgId, setTargetOrgId] = useState(org?.id || (organizations[0]?.id || ""));
+      const [message, setMessage] = useState("");
+      const [sending, setSending] = useState(false);
+      const trimmed = message.trim();
+      const canSubmit = trimmed.length >= 2 && !sending && (mode === "all" || targetOrgId);
+
+      const submit = async () => {
+        if (!canSubmit) return;
+        setSending(true);
+        const ok = mode === "all"
+          ? await onSubmit({ mode: "all", message: trimmed })
+          : await onSubmit({ mode: "single", orgId: targetOrgId, message: trimmed });
+        setSending(false);
+        if (ok !== false) {
+          onClose();
+          toast("success", mode === "all" ? "Xabar barcha CEO'larga yuborildi" : "Xabar yuborildi");
+        }
+      };
+
+      return (
+        <Modal title="CEO'ga xabar yuborish" onClose={onClose} width="560px">
+          <div className="space-y-4">
+            <div className="flex gap-2">
+              <button
+                type="button" onClick={() => setMode("single")}
+                className="flex-1 rounded-lg px-3 py-2.5 text-[13px] font-semibold text-left transition-colors"
+                style={{ border: `1.5px solid ${mode === "single" ? C.teal : C.border}`, backgroundColor: mode === "single" ? C.tealSoft : "transparent", color: mode === "single" ? C.tealDeep : C.muted }}
+              >
+                <Icon name="user" size={13} className="mr-1.5" /> Aynan bitta CEO
+              </button>
+              <button
+                type="button" onClick={() => setMode("all")}
+                className="flex-1 rounded-lg px-3 py-2.5 text-[13px] font-semibold text-left transition-colors"
+                style={{ border: `1.5px solid ${mode === "all" ? C.teal : C.border}`, backgroundColor: mode === "all" ? C.tealSoft : "transparent", color: mode === "all" ? C.tealDeep : C.muted }}
+              >
+                <Icon name="users" size={13} className="mr-1.5" /> Barcha CEO'larga
+              </button>
+            </div>
+            {mode === "single" && (
+              <Select
+                label="CEO tanlang"
+                value={targetOrgId}
+                onChange={setTargetOrgId}
+                options={organizations.map((o) => ({ value: o.id, label: `${o.orgName} (${o.ceoName})` }))}
+              />
+            )}
+            <TextArea label="Xabar matni" value={message} onChange={setMessage} rows={6} placeholder="Xabaringizni shu yerga yozing..." />
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={onClose} disabled={sending}>Bekor qilish</Button>
+              <Button variant="teal" icon="paper-plane" onClick={submit} disabled={!canSubmit} loading={sending}>Yuborish</Button>
+            </div>
+          </div>
+        </Modal>
+      );
+    }
+
+    /* Support'ning o'zi yuborgan barcha xabarlari va ularning statusi
+       (Yuborilgan / O'qilgan / E'tiborsiz qoldirilgan) — "Xabarlar" tabida. */
+    function SupportMessages({ messages }) {
+      const sent = (messages || []).filter((m) => m.senderRole === "support").slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      return (
+        <div className="space-y-2.5">
+          {sent.map((m) => (
+            <Card key={m.id}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[13.5px] font-semibold truncate" style={{ color: C.ink }}>{m.recipientName}</div>
+                  <div className="text-[13px] mt-1 whitespace-pre-wrap" style={{ color: C.muted }}>{m.message}</div>
+                  <div className="text-[11.5px] mt-1.5" style={{ color: C.mutedSoft }}>{fmtDateTime(m.createdAt)}</div>
+                </div>
+                <MessageStatusBadge status={m.status} />
+              </div>
+            </Card>
+          ))}
+          {!sent.length && <EmptyState icon="envelope" title="Hali xabar yuborilmagan" sub="Tashkilotlar bo'limidan CEO'ga xabar yuborishingiz mumkin" />}
+        </div>
+      );
+    }
+
     function SupportOrganizations({ organizations, orgStaff, actions, toast }) {
       const [showForm, setShowForm] = useState(null); // null | {} (new) | org (edit)
       const [search, setSearch] = useState("");
@@ -6024,6 +6366,7 @@
       const [staffOrg, setStaffOrg] = useState(null); // org whose staff modal is open
       const [confirmDelete, setConfirmDelete] = useState(null); // org pending delete confirmation
       const [deleting, setDeleting] = useState(false);
+      const [messageOrg, setMessageOrg] = useState(null); // org whose "Xabar yuborish" modal is open
 
       const existingUsernames = organizations.map((o) => ({ value: o.username, id: o.id }));
       const filtered = organizations.filter((o) => o.orgName.toLowerCase().includes(search.toLowerCase()) || o.ceoName.toLowerCase().includes(search.toLowerCase()));
@@ -6078,6 +6421,7 @@
                   <Button size="sm" variant="teal" icon="user-tie" onClick={() => setStaffOrg(o)}>
                     Xodimlar{orgStaff.filter((s) => s.orgId === o.id).length ? ` (${orgStaff.filter((s) => s.orgId === o.id).length})` : ""}
                   </Button>
+                  <Button size="sm" variant="gold" icon="paper-plane" onClick={() => setMessageOrg(o)}>Xabar yuborish</Button>
                   <Button size="sm" variant="ghost" icon="pen" onClick={() => setShowForm(o)}>Tahrirlash</Button>
                   <Button size="sm" variant="ghost" icon="eye" onClick={() => setViewPwFor(o)}>Login</Button>
                   {o.status === "active" ? (
@@ -6127,6 +6471,18 @@
               actions={actions}
               toast={toast}
               onClose={() => setStaffOrg(null)}
+            />
+          )}
+
+          {messageOrg && (
+            <SupportMessageModal
+              org={messageOrg}
+              organizations={organizations}
+              onClose={() => setMessageOrg(null)}
+              onSubmit={({ mode, orgId, message }) => (
+                mode === "all" ? actions.sendMessageToAllCeos(message) : actions.sendMessageToCeo(message, orgId)
+              )}
+              toast={toast}
             />
           )}
 
@@ -6366,7 +6722,7 @@
       );
     }
 
-    function SupportApp({ session, organizations, orgStaff, actions, onLogout, toast, supportTickets }) {
+    function SupportApp({ session, organizations, orgStaff, actions, onLogout, toast, supportTickets, messages }) {
       const [tab, setTab] = useState("organizations");
       const [collapsedState, setCollapsedState] = useState(!!session.user?.sidebarCollapsed);
       const setCollapsed = (next) => {
@@ -6383,10 +6739,11 @@
 
       const tabs = [
         { key: "organizations", label: "Tashkilotlar", icon: "building" },
+        { key: "messages", label: "Xabarlar", icon: "envelope" },
         { key: "tickets", label: "Texnik xizmat", icon: "headset" },
         { key: "profile", label: "Profil", icon: "user" },
       ];
-      const titles = { organizations: "Tashkilotlar (CEO'lar)", tickets: "Texnik xizmat murojaatlari", profile: "Profil" };
+      const titles = { organizations: "Tashkilotlar (CEO'lar)", messages: "Yuborilgan xabarlar", tickets: "Texnik xizmat murojaatlari", profile: "Profil" };
       const effectiveUser = session.user;
 
       const [name, setName] = useState(effectiveUser.name || "");
@@ -6442,6 +6799,7 @@
             />
             <div className="p-5 md:p-8 pb-24 md:pb-8 max-w-6xl mx-auto">
               {tab === "organizations" && <SupportOrganizations organizations={organizations} orgStaff={orgStaff} actions={actions} toast={toast} />}
+              {tab === "messages" && <SupportMessages messages={messages} />}
               {tab === "tickets" && <SupportTickets tickets={tickets} actions={actions} />}
               {tab === "profile" && (
                 <div className="max-w-3xl mx-auto space-y-5">
@@ -6653,6 +7011,12 @@
          ko'rinadi va shu tashkilotning emas, PLATFORMA darajasidagi yagona
          Support hisobiga tegishli bo'lgani uchun orgId bilan cheklanmaydi. */
       const [supportTickets, setSupportTickets] = useState([]);
+      /* Ichki xabar tizimi: joriy foydalanuvchiga tegishli xabarlar tarixi
+         (Support<->CEO, CEO->Employee/Student — get_queryset backend'da rolga
+         qarab avtomatik cheklaydi) va Dashboard ochilganda avtomatik
+         ko'rsatiladigan hali javob berilmagan xabar. */
+      const [messages, setMessages] = useState([]);
+      const [unreadMsg, setUnreadMsg] = useState(null);
 
       /* Theme endi foydalanuvchi hisobiga (backend) bog'liq — bu state faqat
          UI'ning joriy ko'rinishini kuzatib boradi; manba (source of truth)
@@ -6692,7 +7056,7 @@
         (async () => {
           try {
             const isSupport = session.role === "support";
-            const [groups, students, exams, assignments, results, staff, tickets] = await Promise.all([
+            const [groups, students, exams, assignments, results, staff, tickets, msgs] = await Promise.all([
               groupApi.list().catch(() => []),
               studentApi.list().catch(() => []),
               examApi.list().catch(() => []),
@@ -6700,10 +7064,12 @@
               resultApi.list().catch(() => []),
               staffApi.list().catch(() => []),
               ticketApi.list().catch(() => []),
+              messageApi.list().catch(() => []),
             ]);
             setData({ groups, students, exams, assignments, results });
             setOrgStaff(staff);
             setSupportTickets(tickets);
+            setMessages(msgs);
             if (isSupport) {
               try { setOrganizations(await orgApi.list()); } catch (e) { }
             }
@@ -6712,6 +7078,19 @@
           } finally {
             setReady(true);
           }
+        })();
+      }, [session?.role, session?.orgId]); // eslint-disable-line
+
+      /* CEO/Admin/Manager/Teacher/Student dashboard ochilganda — hali javob
+         berilmagan (status="sent") xabar bo'lsa avtomatik modal ko'rsatish
+         uchun alohida so'rov (Support'ning o'zi buni ko'rmaydi — u faqat
+         yuboradi, qabul qilmaydi). */
+      useEffect(() => {
+        if (!session || session.role === "support") { setUnreadMsg(null); return; }
+        (async () => {
+          try {
+            setUnreadMsg(await messageApi.unread());
+          } catch (e) { /* jim o'tkazamiz — asosiy funksiyaga xalaqit bermasin */ }
         })();
       }, [session?.role, session?.orgId]); // eslint-disable-line
 
@@ -7155,6 +7534,62 @@
             toast("error", e.message || "Belgilanmadi");
           }
         },
+
+        /* ---- ICHKI XABAR TIZIMI ----
+           Support -> CEO (barchasiga yoki bittasiga) va CEO -> o'z tashkilotidagi
+           Employee/Student. Ruxsat tekshiruvi backend darajasida ham majburiy
+           takrorlangan (apps.notifications.views.MessageViewSet.send) — bu
+           yerdagi rol tekshiruvlari faqat tezkor UI xabari uchun. */
+        sendMessageToAllCeos: async (message) => {
+          if (session?.role !== "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return false; }
+          try {
+            const created = await messageApi.sendToAllCeos(message);
+            setMessages((prev) => [...created, ...prev]);
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Xabar yuborilmadi");
+            return false;
+          }
+        },
+        sendMessageToCeo: async (message, orgId) => {
+          if (session?.role !== "support") { toast("error", "Bu amal uchun ruxsat yo'q"); return false; }
+          try {
+            const created = await messageApi.sendToCeo(message, orgId);
+            setMessages((prev) => [...created, ...prev]);
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Xabar yuborilmadi");
+            return false;
+          }
+        },
+        sendMessageToUsers: async (message, recipientIds) => {
+          if (session?.role !== "ceo") { toast("error", "Bu amal uchun ruxsat yo'q"); return false; }
+          try {
+            const created = await messageApi.sendToUsers(message, recipientIds);
+            setMessages((prev) => [...created, ...prev]);
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Xabar yuborilmadi");
+            return false;
+          }
+        },
+        /* Qabul qiluvchi tomonidan "O'qilgan"/"E'tiborsiz qoldirish" — modal
+           yopilgach, navbatdagi o'qilmagan xabar (bo'lsa) darhol qayta so'raladi. */
+        respondToMessage: async (id, status) => {
+          try {
+            const updated = await messageApi.respond(id, status);
+            setMessages((prev) => prev.map((m) => (m.id === id ? updated : m)));
+            try {
+              setUnreadMsg(await messageApi.unread());
+            } catch (e) {
+              setUnreadMsg(null);
+            }
+            return true;
+          } catch (e) {
+            toast("error", e.message || "Amalni bajarib bo'lmadi");
+            return false;
+          }
+        },
       };
 
       /* ---- auth ----
@@ -7260,7 +7695,7 @@
               />
             )}
             {view === "app" && session?.role === "support" && (
-              <SupportApp session={session} organizations={organizations} orgStaff={orgStaff} actions={actions} onLogout={handleLogout} toast={toast} supportTickets={supportTickets} />
+              <SupportApp session={session} organizations={organizations} orgStaff={orgStaff} actions={actions} onLogout={handleLogout} toast={toast} supportTickets={supportTickets} messages={messages} />
             )}
             {view === "app" && session && !["support", "student"].includes(session.role) && (
               <AdminApp
@@ -7271,10 +7706,12 @@
                 toast={toast}
                 organizations={organizations}
                 orgStaff={orgStaffScoped}
+                messages={messages}
+                unreadMsg={unreadMsg}
               />
             )}
             {view === "app" && session?.role === "student" && (
-              <StudentApp session={session} data={scopedData} actions={actions} onLogout={handleLogout} toast={toast} organizations={organizations} />
+              <StudentApp session={session} data={scopedData} actions={actions} onLogout={handleLogout} toast={toast} organizations={organizations} unreadMsg={unreadMsg} />
             )}
             <ToastHost toasts={toasts} remove={removeToast} />
           </div>
