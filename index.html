@@ -1009,36 +1009,41 @@
     /* ============================================================
        ROLLAR / YORLIQLAR
        ============================================================ */
-    /* Xodim rollari (CEO ostida). Har biri bitta "organizations" yozuviga (orgId)
-       biriktirilgan holda backend'dagi Staff API orqali saqlanadi.
-       MUHIM: "Manager" va "Teacher" ENDI yangi xodim yaratishda tanlanmaydi —
-       shu ro'yxat faqat "yaratish mumkin bo'lgan" rollarni bildiradi. Eski
-       (ilgari yaratilgan) Manager/Teacher hisoblari ROLE_LABELS orqali hamon
-       to'g'ri ko'rsatiladi, faqat yangisini shu rollar bilan yaratib bo'lmaydi. */
+    /* YANGI HIYERARXIYA (3 ta asosiy rol): SUPPORT → CEO → ADMIN.
+       "Manager" va "Teacher" rollari BUTUNLAY OLIB TASHLANDI — backendda
+       mavjud shunday yozuvlar migratsiya orqali "admin"ga o'tkazildi.
+       Xodim (CEO ostidagi tashkilot a'zosi) — endi FAQAT "Admin" bo'ladi.
+       "Support" esa employee YARATISH oynalarida UMUMAN chiqmaydi — u
+       alohida, global, hech kim tomonidan yaratib/tahrirlab/o'chirib
+       bo'lmaydigan rol (backendda ham himoyalangan). */
     const STAFF_ROLES = [
       { value: "admin", label: "Admin" },
-      { value: "org_support", label: "Support" },
     ];
     const ROLE_LABELS = {
       support: "Support",
-      org_support: "Support",
       ceo: "CEO — Bosh direktor",
       admin: "Admin",
-      manager: "Manager",
-      teacher: "Teacher",
       student: "O'quvchi",
     };
-    /* Xodimlar (Admin/Support) bo'limini kim ko'ra oladi (ya'ni kim yangi
-       xodim yarata oladi): CEO va Admin — ikkalasi ham bir xil huquqqa ega
-       (Admin yoki Support yaratishi mumkin, CEO/boshqa Admin yarata olmaydi).
-       Support esa mutlaqo xodim yarata olmaydi — faqat operatsion
-       ma'lumotlarni (guruh/o'quvchi/mock/natija) boshqaradi. */
+    /* Xodimlar (Admin) bo'limini kim ko'ra/boshqara oladi: FAQAT CEO (o'z
+       tashkilotiga) va Support (istalgan tashkilotga, org ko'rsatilgan
+       holda). Admin esa hech qanday xodimni (hatto o'z tashkilotidagi
+       boshqa Adminlarni ham) boshqara olmaydi — u oddiy xodim, yuqoriroq
+       huquqqa ega emas. */
     function canManageStaff(role) {
-      return role === "ceo" || role === "admin" || role === "support";
+      return role === "ceo" || role === "support";
     }
-    /* Yangi xodim YARATISH huquqi — canManageStaff'dan farqli, bu yerda
-       Support ATAYLAB yo'q: "Support → employee yaratolmaydi" talabi. */
+    /* Yangi xodim YARATISH huquqi — bu tizimda canManageStaff bilan bir xil
+       (CEO va Support), chunki Admin STAFF bo'limiga umuman kira olmaydi. */
     function canCreateStaff(role) {
+      return role === "ceo" || role === "support";
+    }
+    /* Tashkilot PROFILINI (nom/email/Telegram Chat ID) tahrirlash huquqi —
+       bu canManageStaff'dan ATAYLAB ALOHIDA: xodimlarni boshqarish (faqat
+       CEO/Support) bilan tashkilot profilini tahrirlash (CEO va Admin,
+       ikkalasi ham — bu mavjud funksionallik, o'zgartirilmadi) ikki xil
+       narsa. */
+    function canEditOrgProfile(role) {
       return role === "ceo" || role === "admin";
     }
     function genId(prefix) {
@@ -1888,7 +1893,7 @@
        ============================================================ */
     function RoleLanding({ onSelect }) {
       const roles = [
-        { key: "ceo", label: "CEO / Xodim", desc: "CEO, Admin, Support — o'quv markazi jamoasi", icon: "shield-halved" },
+        { key: "ceo", label: "CEO / Xodim", desc: "CEO va Admin — o'quv markazi jamoasi", icon: "shield-halved" },
         { key: "support", label: "Support", desc: "Kunlik operatsion boshqaruv", icon: "users" },
         { key: "student", label: "Student", desc: "Mock examlar va vazifalar", icon: "graduation-cap" },
       ];
@@ -1980,7 +1985,7 @@
       const [showPw, setShowPw] = useState(false);
 
       const meta = {
-        ceo: { title: "O'quv markazi paneli", desc: "CEO, Admin va Support shu yerdan kiradi", icon: "shield-halved", hint: "" },
+        ceo: { title: "O'quv markazi paneli", desc: "CEO va Admin shu yerdan kiradi", icon: "shield-halved", hint: "" },
         support: { title: "Support panel", desc: "Operatsion boshqaruv", icon: "users", hint: "" },
         student: { title: "Xush kelibsiz", desc: "Mock exam va vazifalaringizga kirish uchun tizimga kiring", icon: "graduation-cap", hint: "Login ma'lumotlarini admin sizga bergan" },
       }[role];
@@ -4242,7 +4247,7 @@
       const [orgEmail, setOrgEmail] = useState(myOrg?.email || "");
       const [telegramChatId, setTelegramChatId] = useState(myOrg?.telegramChatId || "");
       const [orgSaving, setOrgSaving] = useState(false);
-      const canEditOrg = canManageStaff(role); // ceo | admin
+      const canEditOrg = canEditOrgProfile(role); // ceo | admin
       const saveOrg = async () => {
         setOrgSaving(true);
         await actions.updateOrganization(session.orgId, { orgName: orgName.trim(), email: orgEmail.trim(), telegramChatId: telegramChatId.trim() });
@@ -4389,14 +4394,18 @@
       };
 
       /* "organizations" ro'yxati endi faqat Support uchun to'liq keladi (backend
-         cheklovi) — CEO/Admin/Manager/Teacher esa o'z tashkiloti haqidagi ochiq
+         cheklovi) — CEO/Admin esa o'z tashkiloti haqidagi ochiq
          ma'lumotni to'g'ridan-to'g'ri profilidan (session.user.organizationDetail)
          oladi, alohida ro'yxatni qidirishning hojati yo'q. */
       const myOrg = session.user?.organizationDetail || organizations.find((o) => o.id === session.orgId) || null;
-      const canStaff = canManageStaff(session.role); // ceo | admin
+      // MUHIM: canManageStaff endi faqat "ceo" yoki "support" uchun true —
+      // Admin bu komponentga session.role === "admin" bilan kirgani uchun
+      // canStaff bu yerda AMALDA faqat CEO uchun true bo'ladi (Admin —
+      // "Xodimlar" bo'limini butunlay ko'rmaydi, yangi hiyerarxiya talabi).
+      const canStaff = canManageStaff(session.role); // amalda: faqat ceo
 
-      // ROLE-BASED TABS: (eski) Manager/Teacher "Xodimlar" bo'limini ko'rmaydi —
-      // faqat CEO va Admin o'z tashkilotiga Admin yoki Support qo'sha oladi.
+      // ROLE-BASED TABS: "Xodimlar" bo'limini FAQAT CEO ko'radi (u yerda faqat
+      // "Admin" rolida xodim yaratadi) — Admin bu bo'limga kira olmaydi.
       const tabs = [
         { key: "overview", label: "Umumiy", icon: "table-cells-large" },
         { key: "groups", label: "Guruhlar", icon: "layer-group" },
@@ -4404,8 +4413,8 @@
         { key: "exams", label: "Mock Examlar", icon: "book-open" },
         { key: "assignments", label: "Vazifalar", icon: "clipboard-list" },
         ...(canStaff ? [{ key: "staff", label: "Xodimlar", icon: "user-tie" }] : []),
-        // Faqat CEO xodim/o'quvchilarga xabar yubora oladi (Admin/Manager/
-        // Teacher — yo'q), shu sabab bu tab faqat session.role === "ceo"da.
+        // Faqat CEO xodim/o'quvchilarga xabar yubora oladi (Admin — yo'q),
+        // shu sabab bu tab faqat session.role === "ceo"da.
         ...(session.role === "ceo" ? [{ key: "messages", label: "Xabarlar", icon: "envelope" }] : []),
         { key: "profile", label: "Profil", icon: "user" },
       ];
@@ -4413,7 +4422,7 @@
 
       // CEO uchun profil ma'lumotlari to'g'ridan-to'g'ri session.user'da (backend
       // ProfileView ceo tarmog'idan keladi: name/username/phone/email/avatar).
-      // Admin/Manager/Teacher uchun esa "orgStaff" ro'yxatidagi (yoki uning
+      // Admin uchun esa "orgStaff" ro'yxatidagi (yoki uning
       // yo'qligida session.user'dagi) yozuv ishlatiladi.
       const effectiveUser = session.role === "ceo"
         ? session.user
@@ -4614,8 +4623,9 @@
     }
 
     /* ============================================================
-       ADMIN — STAFF (Xodimlar): CEO/Admin o'z tashkilotiga
-       Admin/Support hisoblarini yaratadi/boshqaradi.
+       ADMIN — STAFF (Xodimlar): FAQAT CEO shu bo'limga kira oladi va
+       o'z tashkilotiga Admin xodim yaratadi/boshqaradi (yangi hiyerarxiya:
+       Support → CEO → Admin — Admin hech kimni yarata olmaydi).
        ============================================================ */
     function AdminStaff({ orgStaff, actions, toast, session }) {
       const [showNew, setShowNew] = useState(false);
@@ -4632,9 +4642,9 @@
       const [editSaving, setEditSaving] = useState(false);
       const [viewPwFor, setViewPwFor] = useState(null);
 
-      // CEO va Admin — ikkalasi ham BIR XIL rollarni yaratishi mumkin: faqat
-      // Admin yoki Support (hech biri CEO yarata olmaydi, hech biri o'zaro
-      // farqlanmaydi — bosh boshqaruv zanjiri CEO darajasida yakunlanadi).
+      // CEO xodim yaratganda rol tanlashda FAQAT "Admin" chiqadi — "Support"
+      // employee yaratish oynalarida umuman ko'rinmaydi (STAFF_ROLES endi
+      // bitta yagona qiymatdan iborat).
       const creatableRoles = STAFF_ROLES;
 
       const submit = async () => {
@@ -4659,12 +4669,12 @@
       };
 
       const roleLabel = (r) => ROLE_LABELS[r] || r;
-      const roleTone = (r) => (r === "admin" ? "gold" : r === "org_support" ? "teal" : "muted");
+      const roleTone = (r) => (r === "admin" ? "gold" : "muted");
 
       return (
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-            <div className="text-[13px]" style={{ color: C.muted }}>Tashkilotingiz uchun Admin va Support hisoblarini shu yerdan yarating.</div>
+            <div className="text-[13px]" style={{ color: C.muted }}>Tashkilotingiz uchun Admin hisoblarini shu yerdan yarating.</div>
             <Button icon="user-plus" onClick={() => { setShowNew(true); setCreated(null); setRole(creatableRoles[0]?.value || "admin"); }}>Yangi xodim</Button>
           </div>
 
@@ -6515,13 +6525,23 @@
       );
     }
 
-    /* Support tomonidan tanlangan bitta tashkilotning xodimlari (Admin/Support,
-       eski Manager/Teacher hisoblari ham) ro'yxati — ko'rish, tahrirlash, parolni
-       ko'rish/yangilash, bloklash/faollashtirish va butunlay o'chirish.
-       MUHIM: Support YANGI XODIM YARATA OLMAYDI — bu huquq faqat CEO/Admin'da
-       (backendda ham StaffViewSet.get_permissions() shu qoidani ta'minlaydi),
-       shu sabab bu modalda "Yangi xodim" tugmasi va yaratish formasi ATAYLAB YO'Q. */
+    /* Support tomonidan tanlangan bitta tashkilotning xodimlari (endi FAQAT
+       "Admin" — eski Manager/Teacher hisoblari backendda migratsiya orqali
+       "admin"ga o'tkazilgan) ro'yxati — ko'rish, YANGI XODIM (Admin)
+       YARATISH, tahrirlash, parolni ko'rish/yangilash, bloklash/faollashtirish
+       va butunlay o'chirish.
+       MUHIM: Support shu yerda FAQAT "Admin" rolida xodim yarata oladi,
+       tanlangan tashkilotga bog'lab — "Support" roli bu yerda HECH QACHON
+       tanlanmaydi (STAFF_ROLES'da yo'q) va hech kim (Support ham) boshqa
+       Support hisobini bu yerdan (yoki umuman hech qayerdan) yaratolmaydi/
+       tahrirlay olmaydi/o'chira olmaydi — backendda ham alohida himoyalangan. */
     function SupportOrgStaffModal({ org, orgStaff, actions, toast, onClose }) {
+      const [showNew, setShowNew] = useState(false);
+      const [name, setName] = useState("");
+      const [role, setRole] = useState("admin");
+      const [phone, setPhone] = useState("");
+      const [saving, setSaving] = useState(false);
+      const [created, setCreated] = useState(null);
       const [confirmDel, setConfirmDel] = useState(null);
       const [editTarget, setEditTarget] = useState(null);
       const [editName, setEditName] = useState("");
@@ -6529,6 +6549,19 @@
       const [editRole, setEditRole] = useState("admin");
       const [editSaving, setEditSaving] = useState(false);
       const [viewPwFor, setViewPwFor] = useState(null);
+
+      const creatableRoles = STAFF_ROLES; // faqat "Admin"
+
+      const submit = async () => {
+        if (!name.trim()) { toast("error", "Xodim ismini kiriting"); return; }
+        setSaving(true);
+        const username = usernameFromName(name, orgStaff);
+        const password = randomPassword6();
+        const newStaff = { id: uid("staff"), name: name.trim(), role, phone: phone.trim(), username, password, status: "active", createdAt: Date.now(), orgId: org.id };
+        const ok = await actions.addOrgStaff(newStaff);
+        setSaving(false);
+        if (ok !== false) { setCreated(newStaff); setName(""); setPhone(""); toast("success", "Xodim yaratildi"); }
+      };
 
       const openEdit = (s) => { setEditTarget(s); setEditName(s.name); setEditPhone(s.phone || ""); setEditRole(s.role); };
       const submitEdit = async () => {
@@ -6541,13 +6574,14 @@
       };
 
       const roleLabel = (r) => ROLE_LABELS[r] || r;
-      const roleTone = (r) => (r === "admin" ? "gold" : r === "org_support" ? "teal" : "muted");
+      const roleTone = (r) => (r === "admin" ? "gold" : "muted");
 
       return (
         <Modal title={`${org.orgName} — Xodimlar`} onClose={onClose} width="760px">
           <div className="space-y-4">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              <div className="text-[13px]" style={{ color: C.muted }}>CEO: {org.ceoName} · shu tashkilotning xodimlari.</div>
+              <div className="text-[13px]" style={{ color: C.muted }}>CEO: {org.ceoName} · shu tashkilotning Admin xodimlari.</div>
+              <Button icon="user-plus" onClick={() => { setShowNew(true); setCreated(null); setRole(creatableRoles[0]?.value || "admin"); }}>Yangi xodim</Button>
             </div>
 
             <Card padded={false}>
@@ -6594,6 +6628,39 @@
               <Button variant="ghost" onClick={onClose}>Yopish</Button>
             </div>
           </div>
+
+          {showNew && (
+            <Modal title="Yangi xodim yaratish" onClose={() => setShowNew(false)}>
+              {!created ? (
+                <div className="space-y-4">
+                  <Input label="To'liq ism" value={name} onChange={setName} placeholder="Masalan: Dilnoza Yusupova" required />
+                  <Select label="Rol" value={role} onChange={setRole} options={creatableRoles.map((r) => ({ value: r.value, label: r.label }))} />
+                  <Input label="Telefon" value={phone} onChange={setPhone} placeholder="+998 90 000 00 00" icon="phone" />
+                  <div className="flex justify-end gap-2 pt-2">
+                    <Button variant="ghost" onClick={() => setShowNew(false)}>Bekor qilish</Button>
+                    <Button onClick={submit} loading={saving} icon="check">Yaratish</Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-[13.5px] rounded-lg px-3 py-2.5" style={{ backgroundColor: C.successSoft, color: C.success }}>
+                    <Icon name="circle-check" size={16} /> Xodim muvaffaqiyatli yaratildi
+                  </div>
+                  <div className="rounded-xl p-4 space-y-2" style={{ backgroundColor: C.paperDim }}>
+                    <div className="flex justify-between text-[13.5px]"><span style={{ color: C.muted }}>Ism</span><span className="font-semibold" style={{ color: C.text }}>{created.name}</span></div>
+                    <div className="flex justify-between text-[13.5px]"><span style={{ color: C.muted }}>Rol</span><span className="font-semibold" style={{ color: C.text }}>{roleLabel(created.role)}</span></div>
+                    <div className="flex justify-between text-[13.5px]"><span style={{ color: C.muted }}>Username</span><span className="f-mono font-semibold" style={{ color: C.ink }}>{created.username}</span></div>
+                    <div className="flex justify-between text-[13.5px]"><span style={{ color: C.muted }}>Parol</span><span className="f-mono font-semibold" style={{ color: C.ink }}>{created.password}</span></div>
+                  </div>
+                  <div className="text-[12px]" style={{ color: C.mutedSoft }}>Bu ma'lumotlarni xodimga yetkazing — u "CEO / Xodim" havolasidan shu login/parol bilan kiradi.</div>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="ghost" onClick={() => setShowNew(false)}>Yopish</Button>
+                    <Button icon="plus" onClick={() => setCreated(null)}>Yana qo'shish</Button>
+                  </div>
+                </div>
+              )}
+            </Modal>
+          )}
 
           {editTarget && (
             <Modal title="Xodimni tahrirlash" onClose={() => setEditTarget(null)}>
@@ -6922,7 +6989,7 @@
       // sifatida login qilgan odam ?role=ceo yoki oddiy "/" havolasini
       // ochganda ham avtomatik support sifatida kirib qolar edi.
       function roleMatchesFixed(roleFromData, fixedRole) {
-        if (fixedRole === "ceo") return ["ceo", "admin", "manager", "teacher", "org_support"].includes(roleFromData);
+        if (fixedRole === "ceo") return ["ceo", "admin"].includes(roleFromData);
         if (fixedRole === "support") return roleFromData === "support";
         return roleFromData === "student";
       }
@@ -7426,9 +7493,11 @@
           }
         },
 
-        /* ---- ORG STAFF (Admin/Support) — xodim YARATISH faqat CEO va Admin
-           uchun (o'z tashkilotiga). Support ENDI xodim qo'sha OLMAYDI — shu
-           sabab bu yerda (canManageStaff emas) canCreateStaff ishlatiladi. ---- */
+        /* ---- ORG STAFF (endi FAQAT "Admin" roli) — xodim YARATISH/BOSHQARISH
+           faqat CEO (o'z tashkilotiga) va Support (istalgan tashkilotga, org
+           ko'rsatilgan holda) uchun. Admin esa hech qanday xodimni (hatto
+           o'zini ham — profilini alohida "self" yo'li orqali tahrirlaydi,
+           pastda ko'ring) boshqara olmaydi. ---- */
         addOrgStaff: async (s) => {
           const targetOrgId = isSupportSession ? s.orgId : sessionOrgId;
           if (!canCreateStaff(session?.role) || !targetOrgId) return deny("xodim");
