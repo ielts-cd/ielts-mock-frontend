@@ -6948,7 +6948,16 @@
     function resolveRoleFromUrl() {
       try {
         const q = new URLSearchParams(window.location.search).get("role");
-        if (q === "ceo" || q === "support") return q;
+        // MUHIM: Admin uchun ALOHIDA login sahifasi/URL YO'Q — u xuddi CEO
+        // bilan bir xil "ceo" yo'nalishidan kiradi (backend ham shunday
+        // ishlaydi: LoginView role=='ceo' — avval Organization, topilmasa
+        // User (Admin) jadvalidan qidiradi). Shu sabab ?role=admin ham
+        // ATAYLAB "ceo" sifatida talqin qilinadi — aks holda bu qiymat
+        // tanilmay, pastdagi "return student" ga tushib, login so'rovi
+        // noto'g'ri role bilan (talaba sifatida) yuborilib, "login/parol
+        // xato" degan chalkash xabar chiqarardi.
+        if (q === "ceo" || q === "admin") return "ceo";
+        if (q === "support") return q;
         return "student";
       } catch (e) {
         return "student";
