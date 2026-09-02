@@ -1025,24 +1025,23 @@
       admin: "Admin",
       student: "O'quvchi",
     };
-    /* Xodimlar (Admin) bo'limini kim ko'ra/boshqara oladi: FAQAT CEO (o'z
-       tashkilotiga) va Support (istalgan tashkilotga, org ko'rsatilgan
-       holda). Admin esa hech qanday xodimni (hatto o'z tashkilotidagi
-       boshqa Adminlarni ham) boshqara olmaydi — u oddiy xodim, yuqoriroq
-       huquqqa ega emas. */
+    /* YANGILANDI: Admin endi CEO bilan BIR XIL huquqda xodimlar ro'yxatini
+       ko'rishi, tahrirlashi va o'chirishi mumkin (parity — "CEOda nima
+       bo'lsa, Adminda ham xuddi shunday"). Support ham (istalgan
+       tashkilotga) shu huquqqa ega. Yagona farq — YANGI XODIM YARATISH
+       (pastdagi canCreateStaff'ga qarang: Admin bunga kiritilmagan). */
     function canManageStaff(role) {
-      return role === "ceo" || role === "support";
+      return role === "ceo" || role === "admin" || role === "support";
     }
-    /* Yangi xodim YARATISH huquqi — bu tizimda canManageStaff bilan bir xil
-       (CEO va Support), chunki Admin STAFF bo'limiga umuman kira olmaydi. */
+    /* Yangi xodim YARATISH huquqi — bu ATAYLAB canManageStaff'dan tor:
+       faqat CEO (o'z tashkilotiga) va Support (istalgan tashkilotga).
+       Admin — "CEO yoki umuman boshqa foydalanuvchi yarata olmaydi" talabi
+       bo'yicha bu yerga ATAYLAB kiritilmagan. */
     function canCreateStaff(role) {
       return role === "ceo" || role === "support";
     }
     /* Tashkilot PROFILINI (nom/email/Telegram Chat ID) tahrirlash huquqi —
-       bu canManageStaff'dan ATAYLAB ALOHIDA: xodimlarni boshqarish (faqat
-       CEO/Support) bilan tashkilot profilini tahrirlash (CEO va Admin,
-       ikkalasi ham — bu mavjud funksionallik, o'zgartirilmadi) ikki xil
-       narsa. */
+       CEO va Admin, ikkalasi ham (mavjud funksionallik, o'zgarmadi). */
     function canEditOrgProfile(role) {
       return role === "ceo" || role === "admin";
     }
@@ -4398,14 +4397,15 @@
          ma'lumotni to'g'ridan-to'g'ri profilidan (session.user.organizationDetail)
          oladi, alohida ro'yxatni qidirishning hojati yo'q. */
       const myOrg = session.user?.organizationDetail || organizations.find((o) => o.id === session.orgId) || null;
-      // MUHIM: canManageStaff endi faqat "ceo" yoki "support" uchun true —
-      // Admin bu komponentga session.role === "admin" bilan kirgani uchun
-      // canStaff bu yerda AMALDA faqat CEO uchun true bo'ladi (Admin —
-      // "Xodimlar" bo'limini butunlay ko'rmaydi, yangi hiyerarxiya talabi).
-      const canStaff = canManageStaff(session.role); // amalda: faqat ceo
+      /* YANGILANDI: Admin endi CEO bilan BIR XIL — "Xodimlar" va "Xabarlar"
+         bo'limlarini ham to'liq ko'radi (parity). Yagona farq — Admin yangi
+         xodim YARATA olmaydi (buni AdminStaff komponenti ichida, faqat
+         "Yangi xodim" tugmasini yashirib, alohida cheklaydi). */
+      const canStaff = canManageStaff(session.role); // endi: ceo | admin | support
 
-      // ROLE-BASED TABS: "Xodimlar" bo'limini FAQAT CEO ko'radi (u yerda faqat
-      // "Admin" rolida xodim yaratadi) — Admin bu bo'limga kira olmaydi.
+      // ROLE-BASED TABS: "Xodimlar" va "Xabarlar" — CEO va Admin ikkalasi
+      // ham ko'radi (parity). Faqat "Yangi xodim yaratish" tugmasi Admin
+      // uchun AdminStaff komponenti ichida yashirilgan.
       const tabs = [
         { key: "overview", label: "Umumiy", icon: "table-cells-large" },
         { key: "groups", label: "Guruhlar", icon: "layer-group" },
@@ -4413,9 +4413,8 @@
         { key: "exams", label: "Mock Examlar", icon: "book-open" },
         { key: "assignments", label: "Vazifalar", icon: "clipboard-list" },
         ...(canStaff ? [{ key: "staff", label: "Xodimlar", icon: "user-tie" }] : []),
-        // Faqat CEO xodim/o'quvchilarga xabar yubora oladi (Admin — yo'q),
-        // shu sabab bu tab faqat session.role === "ceo"da.
-        ...(session.role === "ceo" ? [{ key: "messages", label: "Xabarlar", icon: "envelope" }] : []),
+        // CEO va Admin — ikkalasi ham xodim/o'quvchilarga xabar yubora oladi.
+        ...(session.role === "ceo" || session.role === "admin" ? [{ key: "messages", label: "Xabarlar", icon: "envelope" }] : []),
         { key: "profile", label: "Profil", icon: "user" },
       ];
       const titles = { overview: "Umumiy ko'rinish", groups: "Guruhlar", students: "O'quvchilar", exams: "Mock Examlar", assignments: "Vazifalar", staff: "Xodimlar", messages: "Xabarlar", profile: "Profil" };
@@ -4468,8 +4467,8 @@
               {tab === "staff" && canStaff && (
                 <AdminStaff orgStaff={orgStaff} actions={actions} toast={toast} session={session} />
               )}
-              {tab === "messages" && session.role === "ceo" && (
-                <CeoMessages orgStaff={orgStaff} students={data.students} messages={messages} actions={actions} toast={toast} />
+              {tab === "messages" && (session.role === "ceo" || session.role === "admin") && (
+                <CeoMessages orgStaff={orgStaff} students={data.students} messages={messages} actions={actions} toast={toast} session={session} />
               )}
               {tab === "profile" && (
                 <AdminProfile
@@ -4580,9 +4579,12 @@
       );
     }
 
-    function CeoMessages({ orgStaff, students, messages, actions, toast }) {
+    function CeoMessages({ orgStaff, students, messages, actions, toast, session }) {
       const [showCompose, setShowCompose] = useState(false);
-      const sent = (messages || []).filter((m) => m.senderRole === "ceo").slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      // YANGILANDI: Admin endi CEO bilan bir xil xabar yubora oladi — shu
+      // sabab bu yerda qattiq "ceo" emas, joriy sessiyaning haqiqiy roli
+      // (session.role — "ceo" yoki "admin") bo'yicha filtrlanadi.
+      const sent = (messages || []).filter((m) => m.senderRole === session.role).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
       const submit = ({ recipientIds, message }) => actions.sendMessageToUsers(message, recipientIds);
 
@@ -4642,9 +4644,10 @@
       const [editSaving, setEditSaving] = useState(false);
       const [viewPwFor, setViewPwFor] = useState(null);
 
-      // CEO xodim yaratganda rol tanlashda FAQAT "Admin" chiqadi — "Support"
-      // employee yaratish oynalarida umuman ko'rinmaydi (STAFF_ROLES endi
-      // bitta yagona qiymatdan iborat).
+      // Yangi xodim yaratish huquqi — FAQAT CEO (bu komponent Admin uchun
+      // ham render bo'ladi endi, parity tufayli, lekin Admin "yarata olmaydi"
+      // talabi shu yerda amalga oshiriladi: tugma/forma faqat CEO uchun).
+      const canCreate = canCreateStaff(session.role);
       const creatableRoles = STAFF_ROLES;
 
       const submit = async () => {
@@ -4674,8 +4677,12 @@
       return (
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-            <div className="text-[13px]" style={{ color: C.muted }}>Tashkilotingiz uchun Admin hisoblarini shu yerdan yarating.</div>
-            <Button icon="user-plus" onClick={() => { setShowNew(true); setCreated(null); setRole(creatableRoles[0]?.value || "admin"); }}>Yangi xodim</Button>
+            <div className="text-[13px]" style={{ color: C.muted }}>
+              {canCreate ? "Tashkilotingiz uchun Admin hisoblarini shu yerdan yarating." : "Tashkilotingizning Admin xodimlari ro'yxati."}
+            </div>
+            {canCreate && (
+              <Button icon="user-plus" onClick={() => { setShowNew(true); setCreated(null); setRole(creatableRoles[0]?.value || "admin"); }}>Yangi xodim</Button>
+            )}
           </div>
 
           <Card padded={false}>
@@ -7605,7 +7612,10 @@
           }
         },
         sendMessageToUsers: async (message, recipientIds) => {
-          if (session?.role !== "ceo") { toast("error", "Bu amal uchun ruxsat yo'q"); return false; }
+          // YANGILANDI: Admin endi CEO bilan bir xil huquqda xabar yubora
+          // oladi (parity) — backend ham shu ikkala rolni bir xil qabul
+          // qiladi (izoh: apps/notifications/views.py, MessageViewSet.send).
+          if (session?.role !== "ceo" && session?.role !== "admin") { toast("error", "Bu amal uchun ruxsat yo'q"); return false; }
           try {
             const created = await messageApi.sendToUsers(message, recipientIds);
             setMessages((prev) => [...created, ...prev]);
