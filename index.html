@@ -1025,18 +1025,13 @@
       admin: "Admin",
       student: "O'quvchi",
     };
-    /* YANGILANDI: Admin endi CEO bilan BIR XIL huquqda xodimlar ro'yxatini
-       ko'rishi, tahrirlashi va o'chirishi mumkin (parity — "CEOda nima
-       bo'lsa, Adminda ham xuddi shunday"). Support ham (istalgan
-       tashkilotga) shu huquqqa ega. Yagona farq — YANGI XODIM YARATISH
-       (pastdagi canCreateStaff'ga qarang: Admin bunga kiritilmagan). */
+    /* YANGILANDI (qaytarildi): "Xodimlar" bo'limi Admin uchun butunlay olib
+       tashlandi — xodimlarni ko'rish/tahrirlash/o'chirish/yaratish FAQAT CEO
+       (o'z tashkilotiga) va Support (istalgan tashkilotga) uchun. */
     function canManageStaff(role) {
-      return role === "ceo" || role === "admin" || role === "support";
+      return role === "ceo" || role === "support";
     }
-    /* Yangi xodim YARATISH huquqi — bu ATAYLAB canManageStaff'dan tor:
-       faqat CEO (o'z tashkilotiga) va Support (istalgan tashkilotga).
-       Admin — "CEO yoki umuman boshqa foydalanuvchi yarata olmaydi" talabi
-       bo'yicha bu yerga ATAYLAB kiritilmagan. */
+    /* Yangi xodim YARATISH huquqi — hozircha canManageStaff bilan bir xil. */
     function canCreateStaff(role) {
       return role === "ceo" || role === "support";
     }
@@ -1892,7 +1887,8 @@
        ============================================================ */
     function RoleLanding({ onSelect }) {
       const roles = [
-        { key: "ceo", label: "CEO / Xodim", desc: "CEO va Admin — o'quv markazi jamoasi", icon: "shield-halved" },
+        { key: "ceo", label: "CEO", desc: "O'quv markazi rahbari", icon: "shield-halved" },
+        { key: "admin", label: "Admin", desc: "Tashkilot xodimi", icon: "user-tie" },
         { key: "support", label: "Support", desc: "Kunlik operatsion boshqaruv", icon: "users" },
         { key: "student", label: "Student", desc: "Mock examlar va vazifalar", icon: "graduation-cap" },
       ];
@@ -1914,7 +1910,7 @@
                 </h1>
                 <p className="f-body text-[15px] mt-3" style={{ color: C.muted }}>Rolingizni tanlang va tizimga kiring</p>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {roles.map((r) => (
                   <button
                     key={r.key}
@@ -1935,7 +1931,7 @@
               </div>
             </div>
           </div>
-          <div className="text-center pb-6 text-[12px] f-mono" style={{ color: C.mutedSoft }}>/login/ceo · /login/support · /login/student</div>
+          <div className="text-center pb-6 text-[12px] f-mono" style={{ color: C.mutedSoft }}>/login/ceo · /login/admin · /login/support · /login/student</div>
         </div>
       );
     }
@@ -1984,7 +1980,8 @@
       const [showPw, setShowPw] = useState(false);
 
       const meta = {
-        ceo: { title: "O'quv markazi paneli", desc: "CEO va Admin shu yerdan kiradi", icon: "shield-halved", hint: "" },
+        ceo: { title: "CEO paneli", desc: "Faqat CEO shu yerdan kiradi", icon: "shield-halved", hint: "" },
+        admin: { title: "Admin paneli", desc: "Faqat Admin shu yerdan kiradi", icon: "user-tie", hint: "" },
         support: { title: "Support panel", desc: "Operatsion boshqaruv", icon: "users", hint: "" },
         student: { title: "Xush kelibsiz", desc: "Mock exam va vazifalaringizga kirish uchun tizimga kiring", icon: "graduation-cap", hint: "Login ma'lumotlarini admin sizga bergan" },
       }[role];
@@ -4397,15 +4394,12 @@
          ma'lumotni to'g'ridan-to'g'ri profilidan (session.user.organizationDetail)
          oladi, alohida ro'yxatni qidirishning hojati yo'q. */
       const myOrg = session.user?.organizationDetail || organizations.find((o) => o.id === session.orgId) || null;
-      /* YANGILANDI: Admin endi CEO bilan BIR XIL — "Xodimlar" va "Xabarlar"
-         bo'limlarini ham to'liq ko'radi (parity). Yagona farq — Admin yangi
-         xodim YARATA olmaydi (buni AdminStaff komponenti ichida, faqat
-         "Yangi xodim" tugmasini yashirib, alohida cheklaydi). */
-      const canStaff = canManageStaff(session.role); // endi: ceo | admin | support
+      /* YANGILANDI (qaytarildi): "Xodimlar" bo'limi Admin uchun BUTUNLAY
+         OLIB TASHLANDI — bu bo'limni endi FAQAT CEO ko'radi/boshqaradi.
+         "Xabarlar" esa Admin uchun saqlanib qoladi (bu talab qaytarilmadi). */
+      const canStaff = session.role === "ceo";
 
-      // ROLE-BASED TABS: "Xodimlar" va "Xabarlar" — CEO va Admin ikkalasi
-      // ham ko'radi (parity). Faqat "Yangi xodim yaratish" tugmasi Admin
-      // uchun AdminStaff komponenti ichida yashirilgan.
+      // ROLE-BASED TABS: "Xodimlar" — FAQAT CEO. "Xabarlar" — CEO va Admin.
       const tabs = [
         { key: "overview", label: "Umumiy", icon: "table-cells-large" },
         { key: "groups", label: "Guruhlar", icon: "layer-group" },
@@ -6948,16 +6942,12 @@
     function resolveRoleFromUrl() {
       try {
         const q = new URLSearchParams(window.location.search).get("role");
-        // MUHIM: Admin uchun ALOHIDA login sahifasi/URL YO'Q — u xuddi CEO
-        // bilan bir xil "ceo" yo'nalishidan kiradi (backend ham shunday
-        // ishlaydi: LoginView role=='ceo' — avval Organization, topilmasa
-        // User (Admin) jadvalidan qidiradi). Shu sabab ?role=admin ham
-        // ATAYLAB "ceo" sifatida talqin qilinadi — aks holda bu qiymat
-        // tanilmay, pastdagi "return student" ga tushib, login so'rovi
-        // noto'g'ri role bilan (talaba sifatida) yuborilib, "login/parol
-        // xato" degan chalkash xabar chiqarardi.
-        if (q === "ceo" || q === "admin") return "ceo";
-        if (q === "support") return q;
+        // YANGILANDI: endi "ceo" va "admin" QAT'IY ALOHIDA login yo'nalishlari
+        // — ?role=ceo faqat CEO hisobini, ?role=admin faqat Admin hisobini
+        // qabul qiladi (backend ham shunday tekshiradi: apps/accounts/views.py,
+        // LoginView). Boshqa rol bilan kirishga urinish "login yoki parol
+        // noto'g'ri" xatosini qaytaradi — hatto parol to'g'ri bo'lsa ham.
+        if (q === "ceo" || q === "admin" || q === "support") return q;
         return "student";
       } catch (e) {
         return "student";
@@ -7005,7 +6995,10 @@
       // sifatida login qilgan odam ?role=ceo yoki oddiy "/" havolasini
       // ochganda ham avtomatik support sifatida kirib qolar edi.
       function roleMatchesFixed(roleFromData, fixedRole) {
-        if (fixedRole === "ceo") return ["ceo", "admin"].includes(roleFromData);
+        // YANGILANDI: "ceo" va "admin" endi qat'iy ALOHIDA — token qaysi
+        // aniq rol bilan olingan bo'lsa, faqat SHU sahifada tiklanadi.
+        if (fixedRole === "ceo") return roleFromData === "ceo";
+        if (fixedRole === "admin") return roleFromData === "admin";
         if (fixedRole === "support") return roleFromData === "support";
         return roleFromData === "student";
       }
